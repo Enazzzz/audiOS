@@ -4,12 +4,6 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-/*
- * Audio is a core system service, not an application. Milestone 0.1 publishes
- * the configuration and the interfaces later stages will fill in. The engine
- * itself stays in "initializing" until a real device path exists.
- */
-
 typedef enum {
 	AUDIO_UNINITIALIZED = 0,
 	AUDIO_INITIALIZING,
@@ -17,33 +11,57 @@ typedef enum {
 	AUDIO_FAULT
 } audio_status_t;
 
-/** Opaque handle reserved for simultaneous streams. */
+typedef enum {
+	AUDIO_PLAY_STOPPED = 0,
+	AUDIO_PLAY_PLAYING,
+	AUDIO_PLAY_STOPPING
+} audio_play_state_t;
+
+typedef enum {
+	TONE_SINE = 0,
+	TONE_SQUARE,
+	TONE_SAW,
+	TONE_NOISE,
+	TONE_SILENCE
+} tone_kind_t;
+
 typedef struct audio_stream audio_stream_t;
 
 struct audio_system {
 	uint32_t sample_rate;
 	uint8_t bit_depth;
 	uint8_t channels;
+	uint32_t buffer_frames;
 	audio_status_t status;
+	audio_play_state_t play;
 	uint32_t stream_count;
+	uint32_t underruns;
+	uint32_t overruns;
+	uint64_t frames_played;
+	char device_name[48];
+	char last_error[80];
 };
 
-/** Install default high-resolution stereo parameters. */
+/** Detect hardware, install defaults, and mark the subsystem ready. */
 void audio_init(void);
 
-/** Return the live audio-system object. */
+/** Pump DMA. Must run from the shell idle loop. */
+void audio_service(void);
+
 const struct audio_system *audio_system_get(void);
-
-/** Human-readable status word for the shell. */
 const char *audio_status_name(audio_status_t status);
+const char *audio_play_name(audio_play_state_t play);
 
-/** Print the `audio` command report. */
 void audio_print(void);
+void audio_print_status(void);
+void audio_print_devices(void);
+void audio_print_info(void);
 
-/*
- * Foundational stream / graph hooks. 0.1 always fails: no device, no DSP.
- * Later milestones implement these without changing the shell contract.
- */
+void audio_cmd(int argc, char **argv);
+void tone_cmd(int argc, char **argv);
+void play_cmd(int argc, char **argv);
+void stop_cmd(void);
+
 bool audio_stream_open(audio_stream_t **out, uint32_t rate, uint8_t bits, uint8_t channels);
 void audio_stream_close(audio_stream_t *stream);
 

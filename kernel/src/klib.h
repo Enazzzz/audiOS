@@ -14,6 +14,15 @@ size_t strlen(const char *s);
 int strcmp(const char *a, const char *b);
 int strncmp(const char *a, const char *b, size_t n);
 
+/** First occurrence of `c` in `s`, or NULL. */
+char *strchr(char *s, int c);
+
+/** Last `/` component of a path. */
+const char *path_basename(const char *path);
+
+/** True if `s` is `prefix` plus a terminator or extra characters. */
+int str_starts(const char *s, const char *prefix);
+
 /** Format a string into `buf`. Supports %s %c %d %u %x %lu %llu %%. */
 int ksnprintf(char *buf, size_t size, const char *fmt, ...);
 
