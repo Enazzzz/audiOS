@@ -4,6 +4,7 @@
 ARCH := x86_64
 QEMUFLAGS := -m 128M
 IMAGE_NAME := audios
+QEMU_AUDIO := -audiodev wav,id=snd0,path=audios-out.wav -device AC97,audiodev=snd0
 
 HOST_CC := cc
 HOST_CFLAGS := -g -O2 -pipe
@@ -31,11 +32,12 @@ limine-binary/limine:
 		LDFLAGS="$(HOST_LDFLAGS)" \
 		LIBS="$(HOST_LIBS)"
 
-$(IMAGE_NAME).iso: limine-binary/limine kernel
+$(IMAGE_NAME).iso: limine-binary/limine kernel media/test.wav
 	rm -rf iso_root
-	mkdir -p iso_root/boot/limine iso_root/EFI/BOOT
+	mkdir -p iso_root/boot/limine iso_root/EFI/BOOT iso_root/audio
 	cp -v kernel/bin-$(ARCH)/kernel iso_root/boot/
 	cp -v limine.conf iso_root/boot/limine/
+	cp -v media/test.wav media/bad.wav media/float.wav iso_root/audio/
 	cp -v limine-binary/limine-bios.sys limine-binary/limine-bios-cd.bin limine-binary/limine-uefi-cd.bin iso_root/boot/limine/
 	cp -v limine-binary/BOOTX64.EFI iso_root/EFI/BOOT/
 	cp -v limine-binary/BOOTIA32.EFI iso_root/EFI/BOOT/
@@ -49,11 +51,14 @@ $(IMAGE_NAME).iso: limine-binary/limine kernel
 
 .PHONY: run
 run: $(IMAGE_NAME).iso
-	qemu-system-$(ARCH) -M q35 -cdrom $(IMAGE_NAME).iso -boot d -serial stdio $(QEMUFLAGS)
+	qemu-system-$(ARCH) -M q35 -cdrom $(IMAGE_NAME).iso -boot d -serial stdio $(QEMUFLAGS) $(QEMU_AUDIO)
 
 .PHONY: test
 test: $(IMAGE_NAME).iso
 	python3 tools/qemu_smoke.py $(IMAGE_NAME).iso
+
+media/test.wav: tools/gen_wav.py
+	python3 tools/gen_wav.py media
 
 .PHONY: clean
 clean:

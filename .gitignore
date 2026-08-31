@@ -3,3 +3,5 @@
 *.iso
 *.hdd
 .cursor
+/media/
+/audios-out.wav

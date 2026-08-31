@@ -5,9 +5,12 @@
 
 #include "audio.h"
 #include "cpu.h"
+#include "files.h"
 #include "idt.h"
 #include "kbd.h"
 #include "meminfo.h"
+#include "pci.h"
+#include "phys.h"
 #include "pic.h"
 #include "pit.h"
 #include "serial.h"
@@ -29,6 +32,18 @@ static volatile struct limine_memmap_request memmap_request = {
 	.revision = 0
 };
 
+__attribute__((used, section(".limine_requests")))
+static volatile struct limine_hhdm_request hhdm_request = {
+	.id = LIMINE_HHDM_REQUEST_ID,
+	.revision = 0
+};
+
+__attribute__((used, section(".limine_requests")))
+static volatile struct limine_module_request module_request = {
+	.id = LIMINE_MODULE_REQUEST_ID,
+	.revision = 0
+};
+
 __attribute__((used, section(".limine_requests_start")))
 static volatile uint64_t limine_requests_start_marker[] = LIMINE_REQUESTS_START_MARKER;
 
@@ -45,8 +60,7 @@ static void hcf(void)
 
 /**
  * Kernel entry. Limine has already placed us in 64-bit mode with a stack.
- * Bring up console, interrupts, timer, keyboard, CPU/memory probes, and the
- * audio system object, then hand control to the shell.
+ * Bring up console, memory, PCI, the audio engine, then the shell.
  */
 void kmain(void)
 {
@@ -64,6 +78,14 @@ void kmain(void)
 
 	tty_init(framebuffer_request.response->framebuffers[0]);
 	meminfo_init(memmap_request.response);
+
+	uint64_t hhdm = 0;
+	if (hhdm_request.response != NULL) {
+		hhdm = hhdm_request.response->offset;
+	}
+	phys_init(hhdm, memmap_request.response);
+	pci_init();
+	files_init(module_request.response);
 
 	struct cpu_info cpu;
 	cpu_detect(&cpu);

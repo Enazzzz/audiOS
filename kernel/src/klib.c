@@ -199,3 +199,44 @@ int ksnprintf(char *buf, size_t size, const char *fmt, ...)
 	va_end(ap);
 	return n;
 }
+
+/** First occurrence of `c` in `s`, or NULL. */
+char *strchr(char *s, int c)
+{
+	for (; *s != '\0'; s++) {
+		if ((unsigned char)*s == (unsigned char)c) {
+			return s;
+		}
+	}
+	return NULL;
+}
+
+/** Last path component after the final slash. */
+const char *path_basename(const char *path)
+{
+	const char *slash = path;
+	const char *p = path;
+	if (path == NULL || path[0] == '\0') {
+		return "";
+	}
+	while (*p != '\0') {
+		if (*p == '/' && p[1] != '\0') {
+			slash = p + 1;
+		}
+		p++;
+	}
+	return slash;
+}
+
+/** True when `s` begins with `prefix`. */
+int str_starts(const char *s, const char *prefix)
+{
+	while (*prefix != '\0') {
+		if (*s != *prefix) {
+			return 0;
+		}
+		s++;
+		prefix++;
+	}
+	return 1;
+}

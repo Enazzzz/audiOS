@@ -10,12 +10,13 @@
 #include "tty.h"
 #include "version.h"
 
-#define LINE_MAX	96
+#define LINE_MAX	128
+#define ARG_MAX		8
 
 static char line[LINE_MAX];
 static unsigned line_len;
 
-/** Trim trailing CR/LF/spaces in place. */
+/** Trim leading/trailing whitespace in place. */
 static void trim_inplace(char *s)
 {
 	size_t n = strlen(s);
@@ -30,6 +31,28 @@ static void trim_inplace(char *s)
 		size_t rest = strlen(p);
 		memmove(s, p, rest + 1);
 	}
+}
+
+/** Split `s` into argv in place. */
+static int split_args(char *s, char **argv, int max)
+{
+	int argc = 0;
+	while (*s != '\0' && argc < max) {
+		while (*s == ' ' || *s == '\t') {
+			s++;
+		}
+		if (*s == '\0') {
+			break;
+		}
+		argv[argc++] = s;
+		while (*s != '\0' && *s != ' ' && *s != '\t') {
+			s++;
+		}
+		if (*s != '\0') {
+			*s++ = '\0';
+		}
+	}
+	return argc;
 }
 
 /** Draw the identity prompt. */
@@ -57,13 +80,21 @@ static void cmd_help(void)
 {
 	tty_puts("audiOS commands\n");
 	tty_set_color(TTY_COL_DIM);
-	tty_puts("  help      this list\n");
-	tty_puts("  clear     clear the console\n");
-	tty_puts("  version   system version\n");
-	tty_puts("  cpu       processor\n");
-	tty_puts("  mem       physical memory\n");
-	tty_puts("  audio     audio subsystem\n");
-	tty_puts("  reboot    restart the machine\n");
+	tty_puts("  help              this list\n");
+	tty_puts("  clear             clear the console\n");
+	tty_puts("  version           system version\n");
+	tty_puts("  cpu               processor\n");
+	tty_puts("  mem               physical memory\n");
+	tty_puts("  audio             audio configuration\n");
+	tty_puts("  audio devices     list output devices\n");
+	tty_puts("  audio info        selected device details\n");
+	tty_puts("  audio set         change rate/buffer/format\n");
+	tty_puts("  audio status      runtime statistics\n");
+	tty_puts("  audio test        continuous test tone\n");
+	tty_puts("  tone              generate sine/square/saw/noise\n");
+	tty_puts("  play <file.wav>   play a PCM WAV\n");
+	tty_puts("  stop              halt playback\n");
+	tty_puts("  reboot            restart the machine\n");
 	tty_set_color(TTY_COL_FG);
 }
 
@@ -88,20 +119,31 @@ static void shell_dispatch(char *cmd)
 	if (cmd[0] == '\0') {
 		return;
 	}
-	if (strcmp(cmd, "help") == 0) {
+	char *argv[ARG_MAX];
+	int argc = split_args(cmd, argv, ARG_MAX);
+	if (argc == 0) {
+		return;
+	}
+	if (strcmp(argv[0], "help") == 0) {
 		cmd_help();
-	} else if (strcmp(cmd, "clear") == 0) {
+	} else if (strcmp(argv[0], "clear") == 0) {
 		tty_clear();
 		shell_banner();
-	} else if (strcmp(cmd, "version") == 0) {
+	} else if (strcmp(argv[0], "version") == 0) {
 		cmd_version();
-	} else if (strcmp(cmd, "cpu") == 0) {
+	} else if (strcmp(argv[0], "cpu") == 0) {
 		cpu_print();
-	} else if (strcmp(cmd, "mem") == 0) {
+	} else if (strcmp(argv[0], "mem") == 0) {
 		meminfo_print();
-	} else if (strcmp(cmd, "audio") == 0) {
-		audio_print();
-	} else if (strcmp(cmd, "reboot") == 0) {
+	} else if (strcmp(argv[0], "audio") == 0) {
+		audio_cmd(argc, argv);
+	} else if (strcmp(argv[0], "tone") == 0) {
+		tone_cmd(argc, argv);
+	} else if (strcmp(argv[0], "play") == 0) {
+		play_cmd(argc, argv);
+	} else if (strcmp(argv[0], "stop") == 0) {
+		stop_cmd();
+	} else if (strcmp(argv[0], "reboot") == 0) {
 		system_reboot();
 	} else {
 		tty_set_color(TTY_COL_ERR);
@@ -155,6 +197,7 @@ void shell_run(void)
 		while ((c = serial_getc()) >= 0) {
 			shell_feed(c);
 		}
+		audio_service();
 		tty_tick_cursor(pit_ticks());
 		__asm__ volatile ("pause");
 	}
