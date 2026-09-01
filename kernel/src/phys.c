@@ -29,7 +29,7 @@ void phys_init(uint64_t hhdm_offset, struct limine_memmap_response *map)
 	if (map == NULL) {
 		return;
 	}
-	const size_t want = 2u * 1024u * 1024u;
+	const size_t want = 4u * 1024u * 1024u;
 	for (uint64_t i = 0; i < map->entry_count; i++) {
 		struct limine_memmap_entry *e = map->entries[i];
 		if (e->type != LIMINE_MEMMAP_USABLE) {

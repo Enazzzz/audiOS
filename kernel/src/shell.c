@@ -1,6 +1,7 @@
 #include "shell.h"
 #include "audio.h"
 #include "cpu.h"
+#include "fs.h"
 #include "kbd.h"
 #include "klib.h"
 #include "meminfo.h"
@@ -99,8 +100,20 @@ static void cmd_help(void)
 	tty_puts("  audio status      runtime statistics\n");
 	tty_puts("  audio test        continuous test tone\n");
 	tty_puts("  tone              sine/square/saw/noise (no duration = until stop)\n");
-	tty_puts("  play <file.wav>   play a PCM WAV\n");
+	tty_puts("  play <file.wav>   play a PCM WAV (disk or module)\n");
 	tty_puts("  stop              halt playback\n");
+	tty_puts("  ls [path]         list directory\n");
+	tty_puts("  cd [path]         change directory\n");
+	tty_puts("  pwd               print working directory\n");
+	tty_puts("  mkdir <dir>       create directory\n");
+	tty_puts("  rm <path>         delete file or empty directory\n");
+	tty_puts("  cp <src> <dst>    copy file\n");
+	tty_puts("  mv <src> <dst>    rename or move file\n");
+	tty_puts("  cat <file>        show file bytes\n");
+	tty_puts("  touch <file>      create empty file\n");
+	tty_puts("  info <path>       file metadata\n");
+	tty_puts("  storage           capacity and free space\n");
+	tty_puts("  mount             mount status / retry\n");
 	tty_puts("  reboot            restart the machine\n");
 	tty_puts("  Up / Down         previous / next command (PowerShell-style)\n");
 	tty_set_color(TTY_COL_FG);
@@ -225,6 +238,30 @@ static void shell_dispatch(char *cmd)
 		play_cmd(argc, argv);
 	} else if (strcmp(argv[0], "stop") == 0) {
 		stop_cmd();
+	} else if (strcmp(argv[0], "ls") == 0) {
+		fs_cmd_ls(argc, argv);
+	} else if (strcmp(argv[0], "cd") == 0) {
+		fs_cmd_cd(argc, argv);
+	} else if (strcmp(argv[0], "pwd") == 0) {
+		fs_cmd_pwd();
+	} else if (strcmp(argv[0], "mkdir") == 0) {
+		fs_cmd_mkdir(argc, argv);
+	} else if (strcmp(argv[0], "rm") == 0) {
+		fs_cmd_rm(argc, argv);
+	} else if (strcmp(argv[0], "cp") == 0) {
+		fs_cmd_cp(argc, argv);
+	} else if (strcmp(argv[0], "mv") == 0) {
+		fs_cmd_mv(argc, argv);
+	} else if (strcmp(argv[0], "cat") == 0) {
+		fs_cmd_cat(argc, argv);
+	} else if (strcmp(argv[0], "touch") == 0) {
+		fs_cmd_touch(argc, argv);
+	} else if (strcmp(argv[0], "info") == 0) {
+		fs_cmd_info(argc, argv);
+	} else if (strcmp(argv[0], "storage") == 0) {
+		fs_cmd_storage();
+	} else if (strcmp(argv[0], "mount") == 0) {
+		fs_cmd_mount();
 	} else if (strcmp(argv[0], "reboot") == 0) {
 		system_reboot();
 	} else {
