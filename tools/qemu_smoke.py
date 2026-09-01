@@ -1,4 +1,4 @@
-"""Drive audiOS 0.0.4 HDA commands over QEMU serial and check the capture."""
+"""Drive audiOS 0.0.5 HDA + FAT commands over QEMU serial and check capture."""
 
 from __future__ import annotations
 
@@ -73,6 +73,11 @@ def main() -> int:
     except FileNotFoundError:
         pass
 
+    fs_img = Path("audios-fs.img")
+    if not fs_img.is_file():
+        print("missing audios-fs.img (run make test)", file=sys.stderr)
+        return 1
+
     cmd = [
         "qemu-system-x86_64",
         "-M",
@@ -94,6 +99,12 @@ def main() -> int:
         "ich9-intel-hda,id=hda0",
         "-device",
         "hda-output,bus=hda0.0,audiodev=snd0",
+        "-drive",
+        f"if=none,id=stick,file={fs_img},format=raw,cache=directsync",
+        "-device",
+        "usb-ehci,id=ehci",
+        "-device",
+        "usb-storage,bus=ehci.0,drive=stick",
     ]
     master, slave = pty.openpty()
     attrs = termios.tcgetattr(master)
@@ -108,14 +119,16 @@ def main() -> int:
     )
     os.close(slave)
     try:
-        text = wait_for(master, proc, PROMPT, 30.0)
-        if "audiOS 0.0.4" not in text:
+        text = wait_for(master, proc, PROMPT, 45.0)
+        if "audiOS 0.0.5" not in text:
             raise RuntimeError(f"banner missing\n{text}")
+        if "mounted FAT32" not in text and "USB MSC" not in text:
+            raise RuntimeError(f"filesystem did not mount\n{text}")
 
         send(master, "help")
         text = wait_for(master, proc, PROMPT, 5.0)
-        if "tone" not in text or "play" not in text:
-            raise RuntimeError(f"help missing audio commands\n{text}")
+        if "tone" not in text or "play" not in text or "storage" not in text:
+            raise RuntimeError(f"help missing commands\n{text}")
 
         send(master, "audio")
         text = wait_for(master, proc, PROMPT, 5.0)
@@ -188,9 +201,73 @@ def main() -> int:
         if "not found" not in text:
             raise RuntimeError(f"missing file should fail cleanly\n{text}")
 
+        send(master, "ls")
+        text = wait_for(master, proc, PROMPT, 8.0)
+        if "audio" not in text.lower():
+            raise RuntimeError(f"ls root missing audio/\n{text}")
+
+        send(master, "cd audio")
+        wait_for(master, proc, PROMPT, 5.0)
+        send(master, "pwd")
+        text = wait_for(master, proc, PROMPT, 5.0)
+        if "/audio" not in text.lower():
+            raise RuntimeError(f"pwd/cd failed\n{text}")
+
+        send(master, "ls")
+        text = wait_for(master, proc, PROMPT, 8.0)
+        if "test.wav" not in text.lower():
+            raise RuntimeError(f"ls audio missing test.wav\n{text}")
+
+        send(master, "cd /")
+        wait_for(master, proc, PROMPT, 5.0)
+        send(master, "mkdir notes")
+        text = wait_for(master, proc, PROMPT, 8.0)
+        if "created" not in text:
+            raise RuntimeError(f"mkdir failed\n{text}")
+
+        send(master, "cp audio/test.wav notes/t.wav")
+        text = wait_for(master, proc, PROMPT, 15.0)
+        if "copied" not in text:
+            raise RuntimeError(f"cp failed\n{text}")
+
+        send(master, "info notes/t.wav")
+        text = wait_for(master, proc, PROMPT, 8.0)
+        if "file" not in text.lower() or "size" not in text.lower():
+            raise RuntimeError(f"info failed\n{text}")
+
+        send(master, "play notes/t.wav")
+        text = wait_for(master, proc, "playing", 10.0)
+        drain(master, 0.5)
+        send(master, "stop")
+        wait_for(master, proc, PROMPT, 5.0)
+
+        send(master, "mv notes/t.wav notes/u.wav")
+        text = wait_for(master, proc, PROMPT, 15.0)
+        if "moved" not in text:
+            raise RuntimeError(f"mv failed\n{text}")
+
+        send(master, "touch notes/hello")
+        text = wait_for(master, proc, PROMPT, 8.0)
+        if "touched" not in text:
+            raise RuntimeError(f"touch failed\n{text}")
+
+        send(master, "storage")
+        text = wait_for(master, proc, PROMPT, 15.0)
+        if "FAT32" not in text or "free" not in text:
+            raise RuntimeError(f"storage failed\n{text}")
+
+        send(master, "rm notes/u.wav")
+        wait_for(master, proc, PROMPT, 8.0)
+        send(master, "rm notes/hello")
+        wait_for(master, proc, PROMPT, 8.0)
+        send(master, "rm notes")
+        text = wait_for(master, proc, PROMPT, 8.0)
+        if "removed" not in text:
+            raise RuntimeError(f"rm dir failed\n{text}")
+
         send(master, "version")
         text = wait_for(master, proc, PROMPT, 5.0)
-        if "0.0.4" not in text:
+        if "0.0.5" not in text:
             raise RuntimeError(f"still alive after audio errors?\n{text}")
 
         send(master, "reboot")
@@ -207,15 +284,15 @@ def main() -> int:
     analyze = Path(__file__).with_name("analyze_tone.py")
     if not capture.is_file() or capture.stat().st_size < 1024:
         print(f"warning: capture {capture} missing or tiny; skipping tone FFT", file=sys.stderr)
-        print("audiOS 0.0.4 smoke test passed (commands only)")
+        print("audiOS 0.0.5 smoke test passed (commands only)")
         return 0
 
     rc = subprocess.call([sys.executable, str(analyze), str(capture), "440"])
     if rc != 0:
         print("command checks passed but captured audio was not a 440 Hz tone", file=sys.stderr)
         return 1
-    print("audiOS 0.0.4 smoke test passed")
-    print("checked: HDA, devices, set, tone, history, play, stop, errors, 440 Hz capture")
+    print("audiOS 0.0.5 smoke test passed")
+    print("checked: HDA, FAT32 USB, ls/cd/cp/mv/rm, play from disk, 440 Hz capture")
     return 0
 
 

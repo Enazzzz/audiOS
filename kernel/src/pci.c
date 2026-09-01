@@ -176,3 +176,61 @@ uint16_t pci_io_bar(uint32_t bar)
 	}
 	return (uint16_t)(bar & ~3u);
 }
+
+/** Fill `out` from live config space. */
+static void pci_fill(struct pci_device *d, uint8_t bus, uint8_t slot, uint8_t func)
+{
+	d->bus = bus;
+	d->slot = slot;
+	d->func = func;
+	d->vendor = pci_read16(bus, slot, func, 0x00);
+	d->device = pci_read16(bus, slot, func, 0x02);
+	uint32_t classreg = pci_read32(bus, slot, func, 0x08);
+	d->class_code = (uint8_t)(classreg >> 24);
+	d->subclass = (uint8_t)(classreg >> 16);
+	d->prog_if = (uint8_t)(classreg >> 8);
+	d->irq_line = pci_read8(bus, slot, func, 0x3C);
+	for (int i = 0; i < 6; i++) {
+		d->bar[i] = pci_read32(bus, slot, func, (uint8_t)(0x10 + i * 4));
+	}
+}
+
+int pci_find_class(uint8_t class_code, uint8_t subclass, uint8_t prog_if,
+	unsigned nth, struct pci_device *out)
+{
+	unsigned seen = 0;
+	for (uint16_t bus = 0; bus < 8; bus++) {
+		for (uint8_t slot = 0; slot < 32; slot++) {
+			uint16_t vendor = pci_read16((uint8_t)bus, slot, 0, 0x00);
+			if (vendor == 0xFFFF) {
+				continue;
+			}
+			uint8_t header = pci_read8((uint8_t)bus, slot, 0, 0x0E);
+			uint8_t funcs = (header & 0x80) ? 8 : 1;
+			for (uint8_t func = 0; func < funcs; func++) {
+				vendor = pci_read16((uint8_t)bus, slot, func, 0x00);
+				if (vendor == 0xFFFF) {
+					continue;
+				}
+				uint32_t classreg = pci_read32((uint8_t)bus, slot, func, 0x08);
+				uint8_t cc = (uint8_t)(classreg >> 24);
+				uint8_t sc = (uint8_t)(classreg >> 16);
+				uint8_t pi = (uint8_t)(classreg >> 8);
+				if (cc != class_code || sc != subclass) {
+					continue;
+				}
+				if (prog_if != 0xFF && pi != prog_if) {
+					continue;
+				}
+				if (seen == nth) {
+					if (out) {
+						pci_fill(out, (uint8_t)bus, slot, func);
+					}
+					return 1;
+				}
+				seen++;
+			}
+		}
+	}
+	return 0;
+}

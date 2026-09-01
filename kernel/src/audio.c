@@ -1,6 +1,7 @@
 #include "audio.h"
 #include "ac97.h"
 #include "files.h"
+#include "fs.h"
 #include "hda.h"
 #include "klib.h"
 #include "pci.h"
@@ -835,11 +836,31 @@ void play_cmd(int argc, char **argv)
 		return;
 	}
 	const struct audio_file *f = files_find(argv[1]);
-	if (f == NULL) {
-		audio_fail("file not found");
-		return;
+	const uint8_t *data = NULL;
+	size_t size = 0;
+	const char *shown = argv[1];
+	static uint8_t *disk_wav;
+	static uint32_t disk_wav_phys;
+	if (fs_ready()) {
+		if (disk_wav == NULL) {
+			disk_wav = phys_alloc(512u * 1024u, &disk_wav_phys);
+		}
+		uint32_t n = 0;
+		if (disk_wav != NULL && fs_read_file(argv[1], disk_wav, 512u * 1024u, &n) && n > 0) {
+			data = disk_wav;
+			size = n;
+		}
 	}
-	if (!wav_load(f->data, f->size)) {
+	if (data == NULL) {
+		if (f == NULL) {
+			audio_fail("file not found");
+			return;
+		}
+		data = f->data;
+		size = f->size;
+		shown = f->name;
+	}
+	if (!wav_load(data, size)) {
 		return;
 	}
 	source_is_wav = 1;
@@ -849,7 +870,7 @@ void play_cmd(int argc, char **argv)
 		return;
 	}
 	tty_set_color(TTY_COL_AUDIO);
-	tty_printf("playing %s...\n", f->name);
+	tty_printf("playing %s...\n", shown);
 	tty_set_color(TTY_COL_FG);
 }
 

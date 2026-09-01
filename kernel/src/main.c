@@ -6,6 +6,7 @@
 #include "audio.h"
 #include "cpu.h"
 #include "files.h"
+#include "fs.h"
 #include "idt.h"
 #include "kbd.h"
 #include "meminfo.h"
@@ -96,6 +97,7 @@ void kmain(void)
 	pit_init();
 	kbd_init();
 	audio_init();
+	fs_init(audio_service);
 
 	__asm__ volatile ("sti");
 	shell_run();

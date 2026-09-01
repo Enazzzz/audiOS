@@ -5,6 +5,7 @@ ARCH := x86_64
 QEMUFLAGS := -m 128M
 IMAGE_NAME := audios
 QEMU_AUDIO := -audiodev wav,id=snd0,path=audios-out.wav -device ich9-intel-hda,id=hda0 -device hda-output,bus=hda0.0,audiodev=snd0
+QEMU_USB := -drive if=none,id=stick,file=audios-fs.img,format=raw,cache=directsync -device usb-ehci,id=ehci -device usb-storage,bus=ehci.0,drive=stick
 
 HOST_CC := cc
 HOST_CFLAGS := -g -O2 -pipe
@@ -13,7 +14,7 @@ HOST_LDFLAGS :=
 HOST_LIBS :=
 
 .PHONY: all
-all: $(IMAGE_NAME).iso
+all: $(IMAGE_NAME).iso $(IMAGE_NAME).img
 
 .PHONY: kernel
 kernel: kernel/.deps-obtained
@@ -50,12 +51,28 @@ $(IMAGE_NAME).iso: limine-binary/limine kernel media/test.wav
 	rm -rf iso_root
 
 .PHONY: run
-run: $(IMAGE_NAME).iso
-	qemu-system-$(ARCH) -M q35 -cdrom $(IMAGE_NAME).iso -boot d -serial stdio $(QEMUFLAGS) $(QEMU_AUDIO)
+run: $(IMAGE_NAME).iso audios-fs.img
+	qemu-system-$(ARCH) -M q35 -cdrom $(IMAGE_NAME).iso -boot d -serial stdio $(QEMUFLAGS) $(QEMU_AUDIO) $(QEMU_USB)
 
 .PHONY: test
-test: $(IMAGE_NAME).iso
+test: $(IMAGE_NAME).iso audios-fs.img
 	python3 tools/qemu_smoke.py $(IMAGE_NAME).iso
+
+audios-fs.img: tools/make_fat.py media/test.wav media/bad.wav media/float.wav
+	python3 tools/make_fat.py audios-fs.img --size-mb 16 --dir audio \
+		--file media/test.wav:audio/test.wav \
+		--file media/bad.wav:audio/bad.wav \
+		--file media/float.wav:audio/float.wav
+
+$(IMAGE_NAME).img: limine-binary/limine kernel media/test.wav
+	python3 tools/make_fat.py $(IMAGE_NAME).img --size-mb 64 --dir boot --dir audio --dir boot/limine \
+		--file kernel/bin-$(ARCH)/kernel:boot/kernel \
+		--file limine.conf:boot/limine/limine.conf \
+		--file limine-binary/limine-bios.sys:boot/limine/limine-bios.sys \
+		--file media/test.wav:audio/test.wav \
+		--file media/bad.wav:audio/bad.wav \
+		--file media/float.wav:audio/float.wav
+	./limine-binary/limine bios-install $(IMAGE_NAME).img
 
 media/test.wav: tools/gen_wav.py
 	python3 tools/gen_wav.py media
@@ -63,9 +80,9 @@ media/test.wav: tools/gen_wav.py
 .PHONY: clean
 clean:
 	$(MAKE) -C kernel clean
-	rm -rf iso_root $(IMAGE_NAME).iso
+	rm -rf iso_root $(IMAGE_NAME).iso $(IMAGE_NAME).img audios-fs.img
 
 .PHONY: distclean
 distclean:
 	$(MAKE) -C kernel distclean
-	rm -rf iso_root $(IMAGE_NAME).iso limine-binary
+	rm -rf iso_root $(IMAGE_NAME).iso $(IMAGE_NAME).img audios-fs.img limine-binary

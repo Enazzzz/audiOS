@@ -47,4 +47,12 @@ uint16_t pci_io_bar(uint32_t bar);
 /** Physical MMIO address of BAR `index` (0 if the BAR is I/O). */
 uint64_t pci_mmio_bar(const struct pci_device *dev, unsigned index);
 
+/**
+ * Find the `nth` (0-based) PCI function with this class/subclass.
+ * `prog_if` of 0xFF matches any programming interface.
+ * Returns 1 and fills `out` on success.
+ */
+int pci_find_class(uint8_t class_code, uint8_t subclass, uint8_t prog_if,
+	unsigned nth, struct pci_device *out);
+
 #endif
