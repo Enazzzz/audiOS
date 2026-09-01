@@ -26,4 +26,10 @@ void fs_cmd_mount(void);
 /** Read a whole file from the mounted volume. */
 bool fs_read_file(const char *path, void *buf, uint32_t cap, uint32_t *out_size);
 
+/** Write a whole file (creates or replaces). Never formats the volume. */
+bool fs_write_file(const char *path, const void *buf, uint32_t size);
+
+/** Shared I/O buffer used by WAV load/save. */
+uint8_t *fs_iobuf(uint32_t *cap);
+
 #endif

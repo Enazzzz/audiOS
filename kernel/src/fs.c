@@ -96,7 +96,7 @@ void fs_init(void (*idle)(void))
 	ksnprintf(cwd, sizeof(cwd), "/");
 	errbuf[0] = '\0';
 	uint32_t phys = 0;
-	file_buf_cap = 512u * 1024u;
+	file_buf_cap = 768u * 1024u;
 	file_buf = phys_alloc(file_buf_cap, &phys);
 	if (!usb_msc_init(&disk, idle)) {
 		ksnprintf(errbuf, sizeof(errbuf), "%s", "no USB mass storage");
@@ -401,4 +401,30 @@ bool fs_read_file(const char *path, void *buf, uint32_t cap, uint32_t *out_size)
 		return false;
 	}
 	return fat_read(abs, buf, cap, out_size);
+}
+
+bool fs_write_file(const char *path, const void *buf, uint32_t size)
+{
+	if (!fs_ready()) {
+		ksnprintf(errbuf, sizeof(errbuf), "%s", "no filesystem");
+		return false;
+	}
+	char abs[FAT_PATH_MAX];
+	if (!abs_path(path, abs, sizeof(abs))) {
+		ksnprintf(errbuf, sizeof(errbuf), "%s", "bad path");
+		return false;
+	}
+	if (!fat_write(abs, buf, size)) {
+		ksnprintf(errbuf, sizeof(errbuf), "%s", fat_last_error());
+		return false;
+	}
+	return true;
+}
+
+uint8_t *fs_iobuf(uint32_t *cap)
+{
+	if (cap) {
+		*cap = file_buf_cap;
+	}
+	return file_buf;
 }
