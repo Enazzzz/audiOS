@@ -12,9 +12,16 @@
 
 #define LINE_MAX	128
 #define ARG_MAX		8
+#define HIST_MAX	32
 
 static char line[LINE_MAX];
 static unsigned line_len;
+static char hist[HIST_MAX][LINE_MAX];
+static unsigned hist_len;
+static unsigned hist_pos;
+static char draft[LINE_MAX];
+static int browsing;
+static int esc;	/* 0, 1 = ESC, 2 = CSI, 3 = SS3 (serial arrows) */
 
 /** Trim leading/trailing whitespace in place. */
 static void trim_inplace(char *s)
@@ -91,10 +98,11 @@ static void cmd_help(void)
 	tty_puts("  audio set         change rate/buffer/format\n");
 	tty_puts("  audio status      runtime statistics\n");
 	tty_puts("  audio test        continuous test tone\n");
-	tty_puts("  tone              generate sine/square/saw/noise\n");
+	tty_puts("  tone              sine/square/saw/noise (no duration = until stop)\n");
 	tty_puts("  play <file.wav>   play a PCM WAV\n");
 	tty_puts("  stop              halt playback\n");
 	tty_puts("  reboot            restart the machine\n");
+	tty_puts("  Up / Down         previous / next command (PowerShell-style)\n");
 	tty_set_color(TTY_COL_FG);
 }
 
@@ -111,6 +119,79 @@ static void cmd_version(void)
 	tty_printf("uptime %llu.%03llu s\n",
 		(unsigned long long)secs, (unsigned long long)millis);
 	tty_set_color(TTY_COL_FG);
+}
+
+/** Remember a non-empty command, like PowerShell history. */
+static void hist_remember(const char *s)
+{
+	if (s[0] == '\0') {
+		return;
+	}
+	if (hist_len > 0 && strcmp(hist[hist_len - 1], s) == 0) {
+		browsing = 0;
+		hist_pos = hist_len;
+		return;
+	}
+	if (hist_len < HIST_MAX) {
+		ksnprintf(hist[hist_len], LINE_MAX, "%s", s);
+		hist_len++;
+	} else {
+		memmove(hist[0], hist[1], (HIST_MAX - 1) * LINE_MAX);
+		ksnprintf(hist[HIST_MAX - 1], LINE_MAX, "%s", s);
+	}
+	browsing = 0;
+	hist_pos = hist_len;
+}
+
+/** Replace the in-progress line on screen. */
+static void shell_paint_line(const char *s)
+{
+	while (line_len > 0) {
+		tty_putc('\b');
+		line_len--;
+	}
+	line_len = 0;
+	while (s[line_len] != '\0' && line_len + 1u < LINE_MAX) {
+		line[line_len] = s[line_len];
+		tty_putc(s[line_len]);
+		line_len++;
+	}
+	line[line_len] = '\0';
+}
+
+/** Previous command (PowerShell UpArrow). */
+static void hist_up(void)
+{
+	if (hist_len == 0) {
+		return;
+	}
+	if (!browsing) {
+		line[line_len] = '\0';
+		ksnprintf(draft, sizeof(draft), "%s", line);
+		browsing = 1;
+		hist_pos = hist_len;
+	}
+	if (hist_pos == 0) {
+		return;
+	}
+	hist_pos--;
+	shell_paint_line(hist[hist_pos]);
+}
+
+/** Next command, or the draft line at the end of history. */
+static void hist_down(void)
+{
+	if (!browsing) {
+		return;
+	}
+	if (hist_pos + 1u < hist_len) {
+		hist_pos++;
+		shell_paint_line(hist[hist_pos]);
+		return;
+	}
+	browsing = 0;
+	hist_pos = hist_len;
+	shell_paint_line(draft);
 }
 
 /** Dispatch a complete command line. Empty lines are ignored. */
@@ -156,15 +237,52 @@ static void shell_dispatch(char *cmd)
 /** Feed one input character into the line editor. */
 static void shell_feed(int c)
 {
+	/* Serial terminals send CSI/SS3 for arrows; the PS/2 path uses KBD_UP. */
+	if (c == 0x1B) {
+		esc = 1;
+		return;
+	}
+	if (esc == 1) {
+		if (c == '[') {
+			esc = 2;
+			return;
+		}
+		if (c == 'O') {
+			esc = 3;
+			return;
+		}
+		esc = 0;
+	} else if (esc == 2 || esc == 3) {
+		esc = 0;
+		if (c == 'A') {
+			hist_up();
+			return;
+		}
+		if (c == 'B') {
+			hist_down();
+			return;
+		}
+		return;
+	}
 	if (c == '\r') {
 		c = '\n';
 	}
 	if (c == '\n') {
 		tty_putc('\n');
 		line[line_len] = '\0';
+		hist_remember(line);
 		shell_dispatch(line);
 		line_len = 0;
+		browsing = 0;
 		shell_prompt();
+		return;
+	}
+	if (c == KBD_UP) {
+		hist_up();
+		return;
+	}
+	if (c == KBD_DOWN) {
+		hist_down();
 		return;
 	}
 	if (c == '\b' || c == 0x7F) {
@@ -188,15 +306,22 @@ static void shell_feed(int c)
 void shell_run(void)
 {
 	line_len = 0;
+	hist_len = 0;
+	hist_pos = 0;
+	browsing = 0;
+	esc = 0;
+	tty_set_idle(audio_service);
 	shell_banner();
 	shell_prompt();
 	for (;;) {
 		int c;
 		while ((c = kbd_getc()) >= 0) {
 			shell_feed(c);
+			audio_service();
 		}
 		while ((c = serial_getc()) >= 0) {
 			shell_feed(c);
+			audio_service();
 		}
 		audio_service();
 		tty_tick_cursor(pit_ticks());

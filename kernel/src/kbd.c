@@ -7,7 +7,7 @@
 #define KBD_STATUS	0x64
 #define KBD_BUF_SIZE	128
 
-static char queue[KBD_BUF_SIZE];
+static int queue[KBD_BUF_SIZE];
 static unsigned qhead;
 static unsigned qtail;
 static int shift;
@@ -43,8 +43,8 @@ static const char map_shifted[128] = {
 	[0x39] = ' ',
 };
 
-/** Push one ASCII byte into the keyboard ring. Drops input if full. */
-static void kbd_push(char c)
+/** Push one key (ASCII or KBD_UP / KBD_DOWN). Drops input if full. */
+static void kbd_push(int c)
 {
 	unsigned next = (qhead + 1) % KBD_BUF_SIZE;
 	if (next == qtail) {
@@ -75,18 +75,28 @@ static void kbd_handle(uint8_t sc)
 	}
 	int release = (sc & 0x80) != 0;
 	uint8_t code = sc & 0x7F;
-	if (code == 0x2A || code == 0x36) {
-		shift = release ? 0 : 1;
+	if (extended) {
 		extended = 0;
+		if (release) {
+			return;
+		}
+		if (code == 0x48) {
+			kbd_push(KBD_UP);
+		} else if (code == 0x50) {
+			kbd_push(KBD_DOWN);
+		}
 		return;
 	}
-	if (release || extended) {
-		extended = 0;
+	if (code == 0x2A || code == 0x36) {
+		shift = release ? 0 : 1;
+		return;
+	}
+	if (release) {
 		return;
 	}
 	char ch = shift ? map_shifted[code] : map_unshifted[code];
 	if (ch != 0) {
-		kbd_push(ch);
+		kbd_push((unsigned char)ch);
 	}
 }
 
@@ -113,7 +123,7 @@ int kbd_getc(void)
 	if (qhead == qtail) {
 		return -1;
 	}
-	char c = queue[qtail];
+	int key = queue[qtail];
 	qtail = (qtail + 1) % KBD_BUF_SIZE;
-	return (unsigned char)c;
+	return key;
 }

@@ -744,6 +744,19 @@ uint32_t hda_hw_rate(void)
 	return hw_rate;
 }
 
+/**
+ * Push CPU-written PCM out of cache so SB710 DMA sees it.
+ * ATI snoop covers most of this; clflush is the belt for choppy underruns.
+ */
+static void dma_flush(void *p, size_t n)
+{
+	uint8_t *b = (uint8_t *)p;
+	for (size_t i = 0; i < n; i += 64u) {
+		__asm__ volatile ("clflush (%0)" : : "r"(b + i) : "memory");
+	}
+	__asm__ volatile ("mfence" ::: "memory");
+}
+
 /** Reset one stream descriptor and wait for SRST to clear. */
 static int sd_reset(void)
 {
@@ -789,6 +802,7 @@ bool hda_start(uint32_t frames, void (*fill)(int16_t *dst, uint32_t frames))
 		bdl[i].len = period_bytes;
 		bdl[i].ioc = 0;
 		fill((int16_t *)(pcm + i * period_bytes), frames);
+		dma_flush(pcm + i * period_bytes, period_bytes);
 	}
 	next_fill = 0;
 
@@ -812,6 +826,18 @@ bool hda_start(uint32_t frames, void (*fill)(int16_t *dst, uint32_t frames))
 	mmw32(sd_off + SD_CTL, (HDA_STREAM_TAG << 20) | SD_CTL_RUN);
 	running = 1;
 	return true;
+}
+
+/** Re-arm DMA if the controller dropped RUN after an underrun. */
+static void sd_kick(void)
+{
+	mmw32(sd_off + SD_CBL, period_bytes * HDA_PERIODS);
+	mmw16(sd_off + SD_LVI, HDA_PERIODS - 1);
+	mmw16(sd_off + SD_FMT, HDA_FMT_48K_S16_2CH);
+	mmw32(sd_off + SD_BDPL, bdl_phys);
+	mmw32(sd_off + SD_BDPU, 0);
+	mmw8(sd_off + SD_STS, 0x1C);
+	mmw32(sd_off + SD_CTL, (HDA_STREAM_TAG << 20) | SD_CTL_RUN);
 }
 
 void hda_stop(void)
@@ -852,12 +878,13 @@ unsigned hda_service(void (*fill)(int16_t *dst, uint32_t frames))
 	while (next_fill != hw && filled < HDA_PERIODS) {
 		int16_t *dst = (int16_t *)(pcm + next_fill * period_bytes);
 		fill(dst, period_frames);
+		dma_flush(dst, period_bytes);
 		next_fill = (uint8_t)((next_fill + 1) % HDA_PERIODS);
 		filled++;
 	}
 	if ((mmr8(sd_off + SD_CTL) & SD_CTL_RUN) == 0) {
 		underruns++;
-		mmw32(sd_off + SD_CTL, (HDA_STREAM_TAG << 20) | SD_CTL_RUN);
+		sd_kick();
 	}
 	return filled;
 }

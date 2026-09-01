@@ -17,6 +17,34 @@ static int utf8_need;
 static unsigned utf8_index;
 static uint8_t utf8_buf[4];
 static int cursor_visible;
+static void (*idle_fn)(void);
+
+#define TTY_MAX_COLS	320
+#define TTY_MAX_ROWS	90
+#define TTY_PIX_STRIDE	(TTY_MAX_COLS * FONT_WIDTH)
+
+/*
+ * Software text + pixel grid so we never read GPU framebuffer memory.
+ * Scroll is a RAM memmove plus sequential WC writes; glyph-by-glyph
+ * stores to a 1080p card stall the CPU for tens of milliseconds and
+ * starve HDA DMA.
+ */
+static uint8_t cells_ch[TTY_MAX_ROWS][TTY_MAX_COLS];
+static uint32_t cells_fg[TTY_MAX_ROWS][TTY_MAX_COLS];
+static uint32_t pix[TTY_MAX_ROWS * FONT_HEIGHT * TTY_PIX_STRIDE];
+
+/** Refill audio (or anything else) if the shell registered a pump. */
+static void tty_idle(void)
+{
+	if (idle_fn) {
+		idle_fn();
+	}
+}
+
+void tty_set_idle(void (*fn)(void))
+{
+	idle_fn = fn;
+}
 
 /** Write bytes to COM1 without interpreting console state. */
 static void serial_puts_raw(const char *s)
@@ -35,28 +63,38 @@ static uint32_t pack_rgb(uint32_t rgb)
 	return (r << fb->red_mask_shift) | (g << fb->green_mask_shift) | (b << fb->blue_mask_shift);
 }
 
-/** Plot one 8x16 glyph at the current cursor without moving it. */
-static void plot_glyph(unsigned char ch)
+/** Plot one 8x16 glyph into the RAM shadow and the GPU. Writes only. */
+static void plot_at(size_t col, size_t row, unsigned char ch, uint32_t fg)
 {
-	if (fb == NULL) {
+	if (col >= cols || row >= rows) {
 		return;
 	}
 	if (ch >= FONT_GLYPHS) {
 		ch = '?';
 	}
-	size_t x0 = cursor_col * FONT_WIDTH;
-	size_t y0 = cursor_row * FONT_HEIGHT;
-	uint8_t *base = (uint8_t *)fb->address;
-	size_t pitch = (size_t)fb->pitch;
-	unsigned bytes = (unsigned)((fb->bpp + 7) / 8);
-	for (size_t row = 0; row < FONT_HEIGHT; row++) {
-		uint8_t bits = font8x16[ch][row];
-		for (size_t col = 0; col < FONT_WIDTH; col++) {
-			uint32_t colour = (bits & (1u << col)) ? packed_fg : packed_bg;
-			uint8_t *pixel = base + (y0 + row) * pitch + (x0 + col) * bytes;
-			if (bytes >= 4) {
-				*(uint32_t *)pixel = colour;
-			} else if (bytes == 3) {
+	size_t x0 = col * FONT_WIDTH;
+	size_t y0 = row * FONT_HEIGHT;
+	uint8_t *base = (fb != NULL) ? (uint8_t *)fb->address : NULL;
+	size_t pitch = (fb != NULL) ? (size_t)fb->pitch : 0;
+	unsigned bytes = (fb != NULL) ? (unsigned)((fb->bpp + 7) / 8) : 0;
+	for (size_t gy = 0; gy < FONT_HEIGHT; gy++) {
+		uint8_t bits = font8x16[ch][gy];
+		uint32_t *slot = pix + (y0 + gy) * TTY_PIX_STRIDE + x0;
+		for (size_t gx = 0; gx < FONT_WIDTH; gx++) {
+			slot[gx] = (bits & (1u << gx)) ? fg : packed_bg;
+		}
+		if (base == NULL) {
+			continue;
+		}
+		if (bytes >= 4) {
+			uint32_t *pixel = (uint32_t *)(base + (y0 + gy) * pitch + x0 * 4u);
+			for (size_t gx = 0; gx < FONT_WIDTH; gx++) {
+				pixel[gx] = slot[gx];
+			}
+		} else if (bytes == 3) {
+			for (size_t gx = 0; gx < FONT_WIDTH; gx++) {
+				uint32_t colour = slot[gx];
+				uint8_t *pixel = base + (y0 + gy) * pitch + (x0 + gx) * 3u;
 				pixel[0] = (uint8_t)(colour & 0xFF);
 				pixel[1] = (uint8_t)((colour >> 8) & 0xFF);
 				pixel[2] = (uint8_t)((colour >> 16) & 0xFF);
@@ -65,23 +103,77 @@ static void plot_glyph(unsigned char ch)
 	}
 }
 
-/** Scroll the framebuffer up one text row. */
-static void tty_scroll(void)
+/** Burst the RAM shadow to the GPU as whole scanlines (write-combining). */
+static void tty_flush_shadow(void)
 {
-	if (fb == NULL || rows == 0) {
+	if (fb == NULL) {
 		return;
 	}
 	uint8_t *base = (uint8_t *)fb->address;
 	size_t pitch = (size_t)fb->pitch;
-	size_t row_bytes = pitch * FONT_HEIGHT;
-	memmove(base, base + row_bytes, row_bytes * (rows - 1));
-	uint8_t *last = base + row_bytes * (rows - 1);
-	for (size_t y = 0; y < FONT_HEIGHT; y++) {
-		uint32_t *line = (uint32_t *)(last + y * pitch);
-		for (size_t x = 0; x < fb->width; x++) {
-			line[x] = packed_bg;
+	size_t w = cols * FONT_WIDTH;
+	size_t h = rows * FONT_HEIGHT;
+	if (w > (size_t)fb->width) {
+		w = (size_t)fb->width;
+	}
+	if (h > (size_t)fb->height) {
+		h = (size_t)fb->height;
+	}
+	unsigned bytes = (unsigned)((fb->bpp + 7) / 8);
+	for (size_t y = 0; y < h; y++) {
+		const uint32_t *src = pix + y * TTY_PIX_STRIDE;
+		if (bytes >= 4) {
+			uint32_t *dst = (uint32_t *)(base + y * pitch);
+			for (size_t x = 0; x < w; x++) {
+				dst[x] = src[x];
+			}
+		} else if (bytes == 3) {
+			for (size_t x = 0; x < w; x++) {
+				uint32_t colour = src[x];
+				uint8_t *pixel = base + y * pitch + x * 3u;
+				pixel[0] = (uint8_t)(colour & 0xFF);
+				pixel[1] = (uint8_t)((colour >> 8) & 0xFF);
+				pixel[2] = (uint8_t)((colour >> 16) & 0xFF);
+			}
+		}
+		if ((y & 15u) == 15u) {
+			tty_idle();
 		}
 	}
+	tty_idle();
+}
+
+/**
+ * Scroll the console up one text row.
+ * RAM memmove of cells + pixels, then one sequential blit. Never reads VRAM.
+ */
+static void tty_scroll(void)
+{
+	if (rows == 0) {
+		return;
+	}
+	if (rows > 1) {
+		memmove(&cells_ch[0][0], &cells_ch[1][0],
+			(rows - 1) * TTY_MAX_COLS);
+		memmove(&cells_fg[0][0], &cells_fg[1][0],
+			(rows - 1) * TTY_MAX_COLS * sizeof(uint32_t));
+		size_t band = FONT_HEIGHT * TTY_PIX_STRIDE;
+		memmove(pix, pix + band, (rows - 1) * band * sizeof(uint32_t));
+		uint32_t *last = pix + (rows - 1) * band;
+		for (size_t i = 0; i < band; i++) {
+			last[i] = packed_bg;
+		}
+	} else {
+		size_t band = FONT_HEIGHT * TTY_PIX_STRIDE;
+		for (size_t i = 0; i < band; i++) {
+			pix[i] = packed_bg;
+		}
+	}
+	for (size_t c = 0; c < cols; c++) {
+		cells_ch[rows - 1][c] = ' ';
+		cells_fg[rows - 1][c] = packed_fg;
+	}
+	tty_flush_shadow();
 	cursor_row = rows - 1;
 	cursor_col = 0;
 }
@@ -143,6 +235,12 @@ void tty_init(struct limine_framebuffer *framebuffer)
 	if (rows == 0) {
 		rows = 1;
 	}
+	if (cols > TTY_MAX_COLS) {
+		cols = TTY_MAX_COLS;
+	}
+	if (rows > TTY_MAX_ROWS) {
+		rows = TTY_MAX_ROWS;
+	}
 	tty_clear();
 }
 
@@ -169,12 +267,24 @@ void tty_set_color(uint32_t rgb)
 void tty_clear(void)
 {
 	tty_hide_cursor();
+	for (size_t r = 0; r < TTY_MAX_ROWS; r++) {
+		for (size_t c = 0; c < TTY_MAX_COLS; c++) {
+			cells_ch[r][c] = ' ';
+			cells_fg[r][c] = packed_fg;
+		}
+	}
+	for (size_t i = 0; i < (size_t)TTY_MAX_ROWS * FONT_HEIGHT * TTY_PIX_STRIDE; i++) {
+		pix[i] = packed_bg;
+	}
 	if (fb != NULL) {
 		uint8_t *base = (uint8_t *)fb->address;
 		for (uint64_t y = 0; y < fb->height; y++) {
 			uint32_t *line = (uint32_t *)(base + y * fb->pitch);
 			for (uint64_t x = 0; x < fb->width; x++) {
 				line[x] = packed_bg;
+			}
+			if ((y & 31u) == 31u) {
+				tty_idle();
 			}
 		}
 	}
@@ -212,12 +322,18 @@ static void tty_emit(unsigned char ch)
 	if (ch == '\b') {
 		if (cursor_col > 0) {
 			cursor_col--;
-			plot_glyph(' ');
+			cells_ch[cursor_row][cursor_col] = ' ';
+			cells_fg[cursor_row][cursor_col] = packed_fg;
+			plot_at(cursor_col, cursor_row, ' ', packed_fg);
 			serial_puts_raw("\b \b");
 		}
 		return;
 	}
-	plot_glyph(ch);
+	if (cursor_row < TTY_MAX_ROWS && cursor_col < TTY_MAX_COLS) {
+		cells_ch[cursor_row][cursor_col] = ch;
+		cells_fg[cursor_row][cursor_col] = packed_fg;
+	}
+	plot_at(cursor_col, cursor_row, ch, packed_fg);
 	if (ch == FONT_BULLET) {
 		serial_puts_raw("\xE2\x80\xA2");
 	} else if (ch >= 32 && ch < 127) {
@@ -256,8 +372,12 @@ void tty_putc(char c)
 /** Write a C string through `tty_putc`. */
 void tty_puts(const char *s)
 {
+	unsigned n = 0;
 	while (*s != '\0') {
 		tty_putc(*s++);
+		if ((++n & 31u) == 0) {
+			tty_idle();
+		}
 	}
 }
 

@@ -1,4 +1,4 @@
-"""Drive audiOS 0.0.3 HDA commands over QEMU serial and check the capture."""
+"""Drive audiOS 0.0.4 HDA commands over QEMU serial and check the capture."""
 
 from __future__ import annotations
 
@@ -109,7 +109,7 @@ def main() -> int:
     os.close(slave)
     try:
         text = wait_for(master, proc, PROMPT, 30.0)
-        if "audiOS 0.0.3" not in text:
+        if "audiOS 0.0.4" not in text:
             raise RuntimeError(f"banner missing\n{text}")
 
         send(master, "help")
@@ -119,7 +119,7 @@ def main() -> int:
 
         send(master, "audio")
         text = wait_for(master, proc, PROMPT, 5.0)
-        for fragment in ("Audio subsystem", "READY", "96000 Hz", "24-bit", "64 samples"):
+        for fragment in ("Audio subsystem", "READY", "96000 Hz", "24-bit", "256 samples"):
             if fragment not in text:
                 raise RuntimeError(f"audio missing {fragment!r}\n{text}")
         if "none" in text.split("device:", 1)[-1].split("\n", 1)[0] and "AC97" not in text:
@@ -158,6 +158,15 @@ def main() -> int:
         if "stopped" not in text and "already stopped" not in text:
             raise RuntimeError(f"stop failed\n{text}")
 
+        send(master, "cpu")
+        text = wait_for(master, proc, PROMPT, 5.0)
+        if "Processor" not in text:
+            raise RuntimeError(f"cpu failed\n{text}")
+        os.write(master, b"\x1b[A\r")
+        text = wait_for(master, proc, PROMPT, 5.0)
+        if "Processor" not in text:
+            raise RuntimeError(f"Up arrow did not recall cpu\n{text}")
+
         send(master, "play test.wav")
         text = wait_for(master, proc, "playing", 5.0)
         drain(master, 0.6)
@@ -181,7 +190,7 @@ def main() -> int:
 
         send(master, "version")
         text = wait_for(master, proc, PROMPT, 5.0)
-        if "0.0.3" not in text:
+        if "0.0.4" not in text:
             raise RuntimeError(f"still alive after audio errors?\n{text}")
 
         send(master, "reboot")
@@ -198,15 +207,15 @@ def main() -> int:
     analyze = Path(__file__).with_name("analyze_tone.py")
     if not capture.is_file() or capture.stat().st_size < 1024:
         print(f"warning: capture {capture} missing or tiny; skipping tone FFT", file=sys.stderr)
-        print("audiOS 0.0.3 smoke test passed (commands only)")
+        print("audiOS 0.0.4 smoke test passed (commands only)")
         return 0
 
     rc = subprocess.call([sys.executable, str(analyze), str(capture), "440"])
     if rc != 0:
         print("command checks passed but captured audio was not a 440 Hz tone", file=sys.stderr)
         return 1
-    print("audiOS 0.0.3 smoke test passed")
-    print("checked: HDA, devices, set, tone, play, stop, errors, 440 Hz capture")
+    print("audiOS 0.0.4 smoke test passed")
+    print("checked: HDA, devices, set, tone, history, play, stop, errors, 440 Hz capture")
     return 0
 
 
