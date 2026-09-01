@@ -458,7 +458,7 @@ void audio_init(void)
 	system.sample_rate = AUDIOS_AUDIO_RATE;
 	system.bit_depth = (uint8_t)AUDIOS_AUDIO_BITS;
 	system.channels = (uint8_t)AUDIOS_AUDIO_CHANNELS;
-	system.buffer_frames = 64;
+	system.buffer_frames = 256;
 	system.status = AUDIO_INITIALIZING;
 	selected_device = 0;
 	int have_out = 0;
@@ -782,7 +782,7 @@ void tone_cmd(int argc, char **argv)
 	const char *kind = (argc > 1) ? argv[1] : "sine";
 	const char *freq_s = (argc > 2) ? argv[2] : "440";
 	const char *amp_s = (argc > 3) ? argv[3] : "0.5";
-	const char *dur_s = (argc > 4) ? argv[4] : "1s";
+	const char *dur_s = (argc > 4) ? argv[4] : NULL;
 	if (strcmp(kind, "sine") == 0) {
 		tone_kind = TONE_SINE;
 	} else if (strcmp(kind, "square") == 0) {
@@ -803,10 +803,14 @@ void tone_cmd(int argc, char **argv)
 		return;
 	}
 	amp_mille = parse_mille(amp_s);
-	uint32_t ms = parse_duration_ms(dur_s);
 	phase = 0;
 	phase_inc = (uint32_t)((uint64_t)hz * 4294967296ull / system.sample_rate);
-	frames_left = (uint64_t)system.sample_rate * ms / 1000ull;
+	if (dur_s == NULL || dur_s[0] == '\0') {
+		frames_left = UINT64_MAX;
+	} else {
+		uint32_t ms = parse_duration_ms(dur_s);
+		frames_left = (uint64_t)system.sample_rate * ms / 1000ull;
+	}
 	source_is_wav = 0;
 	audio_ok();
 	if (!audio_start_play()) {
@@ -815,6 +819,9 @@ void tone_cmd(int argc, char **argv)
 	tty_set_color(TTY_COL_AUDIO);
 	tty_puts("playing...\n");
 	tty_set_color(TTY_COL_FG);
+	if (frames_left == UINT64_MAX) {
+		tty_puts("continuous — stop to end\n");
+	}
 }
 
 void play_cmd(int argc, char **argv)

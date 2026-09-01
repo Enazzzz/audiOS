@@ -33,4 +33,10 @@ void tty_clear(void);
 /** Draw or erase the hardware cursor bar using the PIT clock. */
 void tty_tick_cursor(uint64_t ticks);
 
+/**
+ * Run `fn` during slow console work (scroll / long prints) so HDA DMA
+ * is refilled instead of underrunning.
+ */
+void tty_set_idle(void (*fn)(void));
+
 #endif

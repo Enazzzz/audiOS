@@ -1,25 +1,29 @@
 # audiOS
 
 audiOS is a lightweight, command-line-first operating system for digital
-audio. v0.0.3 is built around one machine: the **ASRock 960GM-GS3 FX**
+audio. v0.0.4 is built around one machine: the **ASRock 960GM-GS3 FX**
 (AMD FX, 760G/SB710, Realtek ALC662).
 
 ```
-audiOS 0.0.3
+audiOS 0.0.4
 96 kHz • 24-bit • 2 channels
 audiOS>
 ```
 
-## What 0.0.3 does
+## What 0.0.4 does
 
-- Boots on that AM3+ board (legacy BIOS, VGA, PS/2 keyboard)
+- Boots on that AM3+ board (legacy BIOS, VGA or GTX 1050, PS/2 keyboard)
 - Plays through the onboard HD Audio jack (SB710 + ALC662)
-- Same shell: configure, tone, play WAV, stop, status
+- `tone` with no duration keeps playing until `stop`
+- Up / Down arrows recall previous commands (PowerShell-style)
+- Console scroll stays in RAM so the picture does not hitch and audio
+  does not underrun
 - Falls back to Intel ICH AC97 when that is the only controller (QEMU)
 
 ```
-audiOS> tone sine 440Hz 0.5 3s
+audiOS> tone sine 440Hz 0.5
 playing...
+continuous — stop to end
 ```
 
 Plug speakers or headphones into the **green rear jack**.
@@ -33,6 +37,8 @@ Plug speakers or headphones into the **green rear jack**.
 `tone sine|square|saw|noise|silence [freq] [amp] [duration]`
 
 `play <file.wav>` `stop`
+
+Up / Down: previous / next command.
 
 ## Build and boot on the FX box
 
