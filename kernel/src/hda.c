@@ -520,8 +520,6 @@ bool hda_init(void)
 	uint16_t gcap = mmr16(HDA_GCAP);
 	unsigned iss = (gcap >> 8) & 0xFu;
 	sd_off = 0x80u + iss * 0x20u;
-	tty_printf("hda: gcap 0x%x iss %u statests 0x%x\n",
-		(unsigned)gcap, iss, (unsigned)mmr16(HDA_STATESTS));
 
 	bdl = phys_alloc(sizeof(struct hda_bdl) * HDA_PERIODS, &bdl_phys);
 	pcm = phys_alloc(HDA_PERIODS * 256u * 4u, &pcm_phys);
