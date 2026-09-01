@@ -3,11 +3,13 @@
 #include "klib.h"
 #include "pci.h"
 #include "phys.h"
+#include "pit.h"
 #include "tty.h"
 
 #define HDA_PERIODS		32
 #define HDA_STREAM_TAG		1
 #define HDA_FMT_48K_S16_2CH	0x0011
+#define HDA_CORB_ENTRIES	256
 
 /* Controller registers */
 #define HDA_GCAP	0x00
@@ -16,6 +18,19 @@
 #define HDA_STATESTS	0x0E
 #define HDA_INTCTL	0x20
 #define HDA_INTSTS	0x24
+#define HDA_CORBLBASE	0x40
+#define HDA_CORBUBASE	0x44
+#define HDA_CORBWP	0x48
+#define HDA_CORBRP	0x4A
+#define HDA_CORBCTL	0x4C
+#define HDA_CORBSIZE	0x4E
+#define HDA_RIRBLBASE	0x50
+#define HDA_RIRBUBASE	0x54
+#define HDA_RIRBWP	0x58
+#define HDA_RINTCNT	0x5A
+#define HDA_RIRBCTL	0x5C
+#define HDA_RIRBSTS	0x5D
+#define HDA_RIRBSIZE	0x5E
 #define HDA_IC		0x60
 #define HDA_IR		0x64
 #define HDA_ICS		0x68
@@ -23,6 +38,9 @@
 #define ICS_VALID	0x02
 
 #define GCTL_CRST	0x01
+#define CORBCTL_RUN	0x02
+#define RIRBCTL_DMA	0x02
+#define RIRBCTL_OIE	0x04
 
 /* Stream descriptor, relative to sd_off */
 #define SD_CTL		0x00
@@ -100,6 +118,13 @@ static uint8_t nid_afg;
 static uint8_t nid_dac;
 static uint8_t nid_pin;
 static uint32_t codec_vid;
+static uint32_t *corb;
+static uint32_t corb_phys;
+static uint64_t *rirb;
+static uint32_t rirb_phys;
+static uint16_t rirb_rp;
+static uint16_t corb_mask;
+static int use_corb;
 static struct hda_bdl *bdl;
 static uint32_t bdl_phys;
 static uint8_t *pcm;
@@ -117,6 +142,29 @@ static void hda_delay(unsigned n)
 	while (n--) {
 		io_wait();
 	}
+}
+
+/** Sleep `ms` using the calibrated TSC (works before IRQs are on). */
+static void hda_msleep(uint32_t ms)
+{
+	uint64_t start = pit_ticks();
+	while (pit_ticks() - start < (uint64_t)ms) {
+		__asm__ volatile ("pause");
+	}
+}
+
+/**
+ * ATI/AMD SB450–SB710 need PCI 0x42 snoop enabled or CORB/stream DMA
+ * reads stale cache lines.
+ */
+static void ati_enable_snoop(const struct pci_device *dev)
+{
+	if (dev->vendor != AMD_SB710_HDA_VEN) {
+		return;
+	}
+	uint32_t v = pci_read32(dev->bus, dev->slot, dev->func, 0x40);
+	v = (v & ~0x070000u) | 0x020000u;
+	pci_write32(dev->bus, dev->slot, dev->func, 0x40, v);
 }
 
 static uint8_t mmr8(uint32_t off)
@@ -159,24 +207,18 @@ static uint32_t make_verb(uint8_t node, uint32_t verb, uint32_t payload)
 	return w | (verb << 8) | (payload & 0xFFu);
 }
 
-/**
- * Issue one verb via the immediate command registers.
- * CORB/RIRB is optional and was timing out on QEMU's ICH9; ICS is enough
- * for the few setup verbs we need.
- */
-static uint32_t corb_cmd(uint8_t node, uint32_t verb, uint32_t payload)
+/** Immediate-command path. QEMU ICH9 answers this; SB710 often does not. */
+static uint32_t ics_cmd(uint32_t w)
 {
-	uint32_t w = make_verb(node, verb, payload);
-	for (unsigned i = 0; i < 10000; i++) {
-		if ((mmr16(HDA_ICS) & ICS_BUSY) == 0) {
-			break;
-		}
-		hda_delay(1);
+	uint64_t deadline = pit_ticks() + 100;
+	while ((mmr16(HDA_ICS) & ICS_BUSY) != 0 && pit_ticks() < deadline) {
+		__asm__ volatile ("pause");
 	}
-	mmw16(HDA_ICS, ICS_VALID);	/* clear stale result */
+	mmw16(HDA_ICS, ICS_VALID);
 	mmw32(HDA_IC, w);
 	mmw16(HDA_ICS, ICS_BUSY);
-	for (unsigned i = 0; i < 20000; i++) {
+	deadline = pit_ticks() + 100;
+	while (pit_ticks() < deadline) {
 		uint16_t ics = mmr16(HDA_ICS);
 		if ((ics & ICS_BUSY) == 0) {
 			if (ics & ICS_VALID) {
@@ -184,9 +226,43 @@ static uint32_t corb_cmd(uint8_t node, uint32_t verb, uint32_t payload)
 			}
 			break;
 		}
-		hda_delay(1);
+		__asm__ volatile ("pause");
 	}
 	return 0xFFFFFFFFu;
+}
+
+/** CORB/RIRB path. This is what Linux uses on the SB710. */
+static uint32_t corb_send(uint32_t w)
+{
+	uint16_t wp = mmr16(HDA_CORBWP) & corb_mask;
+	uint16_t next = (uint16_t)((wp + 1u) & corb_mask);
+	corb[next] = w;
+	__asm__ volatile ("mfence" ::: "memory");
+	mmw16(HDA_CORBWP, next);
+
+	uint64_t deadline = pit_ticks() + 100;
+	while (pit_ticks() < deadline) {
+		uint16_t rwp = mmr16(HDA_RIRBWP) & corb_mask;
+		if (rwp != rirb_rp) {
+			rirb_rp = (uint16_t)((rirb_rp + 1u) & corb_mask);
+			mmw8(HDA_RIRBSTS, 0x05);
+			return (uint32_t)rirb[rirb_rp];
+		}
+		__asm__ volatile ("pause");
+	}
+	return 0xFFFFFFFFu;
+}
+
+/**
+ * Issue one verb. Prefer CORB on the FX board; ICS is the QEMU fallback.
+ */
+static uint32_t corb_cmd(uint8_t node, uint32_t verb, uint32_t payload)
+{
+	uint32_t w = make_verb(node, verb, payload);
+	if (use_corb) {
+		return corb_send(w);
+	}
+	return ics_cmd(w);
 }
 
 static uint32_t getp(uint8_t node, uint8_t param)
@@ -431,30 +507,108 @@ static int bind_codec(uint8_t codec)
 	return 0;
 }
 
-/** Controller reset and codec wake. */
+/** Reset CORB/RIRB rings. AMD SB710 can ignore the CORBRP reset bit. */
+static int corb_start(void)
+{
+	mmw8(HDA_CORBCTL, 0);
+	mmw8(HDA_RIRBCTL, 0);
+	hda_msleep(1);
+
+	mmw32(HDA_CORBLBASE, corb_phys);
+	mmw32(HDA_CORBUBASE, 0);
+	mmw32(HDA_RIRBLBASE, rirb_phys);
+	mmw32(HDA_RIRBUBASE, 0);
+
+	/* Size capability is bits 6:4 (256 / 16 / 2). Program bits 1:0. */
+	uint8_t csz = mmr8(HDA_CORBSIZE);
+	if (csz & 0x40) {
+		mmw8(HDA_CORBSIZE, (uint8_t)((csz & ~0x03) | 0x02));
+		corb_mask = 0xFF;
+	} else if (csz & 0x20) {
+		mmw8(HDA_CORBSIZE, (uint8_t)((csz & ~0x03) | 0x01));
+		corb_mask = 0x0F;
+	} else {
+		mmw8(HDA_CORBSIZE, (uint8_t)(csz & ~0x03));
+		corb_mask = 0x01;
+	}
+	uint8_t rsz = mmr8(HDA_RIRBSIZE);
+	if (rsz & 0x40) {
+		mmw8(HDA_RIRBSIZE, (uint8_t)((rsz & ~0x03) | 0x02));
+	} else if (rsz & 0x20) {
+		mmw8(HDA_RIRBSIZE, (uint8_t)((rsz & ~0x03) | 0x01));
+	} else {
+		mmw8(HDA_RIRBSIZE, (uint8_t)(rsz & ~0x03));
+	}
+
+	mmw16(HDA_CORBRP, 0x8000);
+	uint64_t deadline = pit_ticks() + 20;
+	while ((mmr16(HDA_CORBRP) & 0x8000) == 0 && pit_ticks() < deadline) {
+		__asm__ volatile ("pause");
+	}
+	mmw16(HDA_CORBRP, 0);
+	deadline = pit_ticks() + 20;
+	while ((mmr16(HDA_CORBRP) & 0x8000) != 0 && pit_ticks() < deadline) {
+		__asm__ volatile ("pause");
+	}
+	mmw16(HDA_CORBWP, 0);
+	mmw16(HDA_RIRBWP, 0x8000);
+	mmw16(HDA_RINTCNT, 1);
+	rirb_rp = 0;
+
+	mmw8(HDA_CORBCTL, CORBCTL_RUN);
+	mmw8(HDA_RIRBCTL, RIRBCTL_DMA | RIRBCTL_OIE);
+	hda_msleep(1);
+	return (mmr8(HDA_CORBCTL) & CORBCTL_RUN) != 0;
+}
+
+/** Controller reset, snoop, and codec wake. */
 static int controller_reset(void)
 {
 	mmw32(HDA_INTCTL, 0);
 	mmw16(HDA_WAKEEN, 0);
 	mmw32(HDA_GCTL, 0);
-	for (unsigned i = 0; i < 20000; i++) {
-		if ((mmr32(HDA_GCTL) & GCTL_CRST) == 0) {
-			break;
-		}
-		hda_delay(1);
+	uint64_t deadline = pit_ticks() + 50;
+	while ((mmr32(HDA_GCTL) & GCTL_CRST) != 0 && pit_ticks() < deadline) {
+		__asm__ volatile ("pause");
 	}
 	mmw32(HDA_GCTL, GCTL_CRST);
-	for (unsigned i = 0; i < 20000; i++) {
-		if (mmr32(HDA_GCTL) & GCTL_CRST) {
-			break;
-		}
-		hda_delay(1);
+	deadline = pit_ticks() + 50;
+	while ((mmr32(HDA_GCTL) & GCTL_CRST) == 0 && pit_ticks() < deadline) {
+		__asm__ volatile ("pause");
 	}
 	if ((mmr32(HDA_GCTL) & GCTL_CRST) == 0) {
 		return 0;
 	}
-	hda_delay(2000);	/* codecs need a moment after CRST */
+	/*
+	 * Spec minimum after CRST is 521 us. Realtek on SB710 is slower;
+	 * the first ICS try on this board returned 0xffffffff.
+	 */
+	hda_msleep(50);
+	mmw16(HDA_WAKEEN, 0x7FFF);
+	deadline = pit_ticks() + 100;
+	while (mmr16(HDA_STATESTS) == 0 && pit_ticks() < deadline) {
+		__asm__ volatile ("pause");
+	}
 	return 1;
+}
+
+/** Walk STATESTS (then the first four slots) and bind analog out. */
+static int try_bind(void)
+{
+	uint16_t statests = mmr16(HDA_STATESTS);
+	for (uint8_t c = 0; c < 15; c++) {
+		if (statests & (1u << c)) {
+			if (bind_codec(c)) {
+				return 1;
+			}
+		}
+	}
+	for (uint8_t c = 0; c < 4; c++) {
+		if (bind_codec(c)) {
+			return 1;
+		}
+	}
+	return 0;
 }
 
 /** True if this PCI function is an HDA controller. */
@@ -506,6 +660,7 @@ bool hda_init(void)
 		return false;
 	}
 	pci_enable_mem_bm(dev);
+	ati_enable_snoop(dev);
 	if (!phys_map_mmio(bar, 0x4000)) {
 		tty_printf("hda: MMIO map failed bar 0x%lx\n", (unsigned long)bar);
 		return false;
@@ -521,34 +676,27 @@ bool hda_init(void)
 	unsigned iss = (gcap >> 8) & 0xFu;
 	sd_off = 0x80u + iss * 0x20u;
 
+	corb = phys_alloc(HDA_CORB_ENTRIES * 4u, &corb_phys);
+	rirb = phys_alloc(HDA_CORB_ENTRIES * 8u, &rirb_phys);
 	bdl = phys_alloc(sizeof(struct hda_bdl) * HDA_PERIODS, &bdl_phys);
 	pcm = phys_alloc(HDA_PERIODS * 256u * 4u, &pcm_phys);
-	if (bdl == NULL || pcm == NULL) {
+	if (corb == NULL || rirb == NULL || bdl == NULL || pcm == NULL) {
 		tty_printf("hda: DMA alloc failed\n");
 		return false;
 	}
 
-	uint16_t statests = mmr16(HDA_STATESTS);
-	int bound = 0;
-	for (uint8_t c = 0; c < 15; c++) {
-		if (statests & (1u << c)) {
-			if (bind_codec(c)) {
-				bound = 1;
-				break;
-			}
-		}
+	use_corb = corb_start();
+	int bound = try_bind();
+	if (!bound && use_corb) {
+		/* QEMU ICH9 sometimes ignores CORB; ICS still works there. */
+		mmw8(HDA_CORBCTL, 0);
+		mmw8(HDA_RIRBCTL, 0);
+		use_corb = 0;
+		bound = try_bind();
 	}
 	if (!bound) {
-		/* Some BIOSes leave STATESTS clear until we poke every slot. */
-		for (uint8_t c = 0; c < 4; c++) {
-			if (bind_codec(c)) {
-				bound = 1;
-				break;
-			}
-		}
-	}
-	if (!bound) {
-		tty_printf("hda: no output path (vid 0x%x)\n", codec_vid);
+		tty_printf("hda: no output path (vid 0x%x st 0x%x)\n",
+			codec_vid, (unsigned)mmr16(HDA_STATESTS));
 		return false;
 	}
 

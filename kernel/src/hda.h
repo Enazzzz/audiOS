@@ -6,8 +6,9 @@
 
 /**
  * Probe PCI for an HDA controller and bring up an analog output path.
- * Tuned for AMD SB710 + Realtek ALC662 (ASRock 960GM-GS3 FX) but walks
- * any codec that exposes a connected line-out / HP / speaker pin.
+ * Tuned for AMD SB710 + Realtek ALC662 (ASRock 960GM-GS3 FX): ATI snoop,
+ * CORB/RIRB verbs, ICS fallback. Walks any codec with a connected
+ * line-out / HP / speaker pin.
  */
 bool hda_init(void);
 
