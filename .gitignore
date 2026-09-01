@@ -2,6 +2,7 @@
 /edk2-ovmf-bins
 *.iso
 *.hdd
+*.img
 .cursor
 /media/
 /audios-out.wav
