@@ -4,7 +4,7 @@
 ARCH := x86_64
 QEMUFLAGS := -m 128M
 IMAGE_NAME := audios
-QEMU_AUDIO := -audiodev wav,id=snd0,path=audios-out.wav -device hda-output,audiodev=snd0
+QEMU_AUDIO := -audiodev wav,id=snd0,path=audios-out.wav -device ich9-intel-hda,id=hda0 -device hda-output,bus=hda0.0,audiodev=snd0
 
 HOST_CC := cc
 HOST_CFLAGS := -g -O2 -pipe

@@ -91,7 +91,9 @@ def main() -> int:
         "-audiodev",
         f"wav,id=snd0,path={capture}",
         "-device",
-        "hda-output,audiodev=snd0",
+        "ich9-intel-hda,id=hda0",
+        "-device",
+        "hda-output,bus=hda0.0,audiodev=snd0",
     ]
     master, slave = pty.openpty()
     attrs = termios.tcgetattr(master)

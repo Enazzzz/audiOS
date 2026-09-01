@@ -3,11 +3,11 @@
 #include "klib.h"
 #include "pci.h"
 #include "phys.h"
+#include "tty.h"
 
 #define HDA_PERIODS		32
 #define HDA_STREAM_TAG		1
 #define HDA_FMT_48K_S16_2CH	0x0011
-#define HDA_CORB_ENTRIES	256
 
 /* Controller registers */
 #define HDA_GCAP	0x00
@@ -16,24 +16,13 @@
 #define HDA_STATESTS	0x0E
 #define HDA_INTCTL	0x20
 #define HDA_INTSTS	0x24
-#define HDA_CORBLBASE	0x40
-#define HDA_CORBUBASE	0x44
-#define HDA_CORBWP	0x48
-#define HDA_CORBRP	0x4A
-#define HDA_CORBCTL	0x4C
-#define HDA_CORBSIZE	0x4E
-#define HDA_RIRBLBASE	0x50
-#define HDA_RIRBUBASE	0x54
-#define HDA_RIRBWP	0x58
-#define HDA_RINTCNT	0x5A
-#define HDA_RIRBCTL	0x5C
-#define HDA_RIRBSTS	0x5D
-#define HDA_RIRBSIZE	0x5E
+#define HDA_IC		0x60
+#define HDA_IR		0x64
+#define HDA_ICS		0x68
+#define ICS_BUSY	0x01
+#define ICS_VALID	0x02
 
 #define GCTL_CRST	0x01
-#define CORBCTL_RUN	0x02
-#define RIRBCTL_DMA	0x02
-#define RIRBCTL_OIE	0x04
 
 /* Stream descriptor, relative to sd_off */
 #define SD_CTL		0x00
@@ -111,11 +100,6 @@ static uint8_t nid_afg;
 static uint8_t nid_dac;
 static uint8_t nid_pin;
 static uint32_t codec_vid;
-static uint32_t *corb;
-static uint32_t corb_phys;
-static uint64_t *rirb;
-static uint32_t rirb_phys;
-static uint16_t rirb_rp;
 static struct hda_bdl *bdl;
 static uint32_t bdl_phys;
 static uint8_t *pcm;
@@ -176,22 +160,29 @@ static uint32_t make_verb(uint8_t node, uint32_t verb, uint32_t payload)
 }
 
 /**
- * Issue one verb and wait for the RIRB response.
- * Returns 0xFFFFFFFF on timeout so callers can fail without hanging.
+ * Issue one verb via the immediate command registers.
+ * CORB/RIRB is optional and was timing out on QEMU's ICH9; ICS is enough
+ * for the few setup verbs we need.
  */
 static uint32_t corb_cmd(uint8_t node, uint32_t verb, uint32_t payload)
 {
-	uint16_t wp = mmr16(HDA_CORBWP) & 0xFF;
-	uint16_t next = (uint16_t)((wp + 1u) % HDA_CORB_ENTRIES);
-	corb[next] = make_verb(node, verb, payload);
-	mmw16(HDA_CORBWP, next);
-
+	uint32_t w = make_verb(node, verb, payload);
+	for (unsigned i = 0; i < 10000; i++) {
+		if ((mmr16(HDA_ICS) & ICS_BUSY) == 0) {
+			break;
+		}
+		hda_delay(1);
+	}
+	mmw16(HDA_ICS, ICS_VALID);	/* clear stale result */
+	mmw32(HDA_IC, w);
+	mmw16(HDA_ICS, ICS_BUSY);
 	for (unsigned i = 0; i < 20000; i++) {
-		uint16_t rwp = mmr16(HDA_RIRBWP) & 0xFF;
-		if (rwp != rirb_rp) {
-			rirb_rp = (uint16_t)((rirb_rp + 1u) % HDA_CORB_ENTRIES);
-			mmw8(HDA_RIRBSTS, 0x05);
-			return (uint32_t)rirb[rirb_rp];
+		uint16_t ics = mmr16(HDA_ICS);
+		if ((ics & ICS_BUSY) == 0) {
+			if (ics & ICS_VALID) {
+				return mmr32(HDA_IR);
+			}
+			break;
 		}
 		hda_delay(1);
 	}
@@ -219,17 +210,22 @@ static unsigned widget_type(uint32_t wcap)
 	return (wcap >> WCAP_TYPE_SHIFT) & WCAP_TYPE_MASK;
 }
 
-/** Unmute an amp at 0 dB when the widget advertises one. */
+/**
+ * Unmute an amp at 0 dB when the widget actually has one.
+ *
+ * Do not poke SET_AMP on widgets without an amp. QEMU's hda-output pin
+ * has no amp but defaults stindex to 0, so a "harmless" SET_AMP there
+ * overwrites the DAC gain with 0 and the analog path goes silent.
+ */
 static void unmute(uint8_t node, int output)
 {
-	uint32_t cap = getp(node, output ? PARAM_AMP_OUT_CAP : PARAM_AMP_IN_CAP);
-	if (cap == 0xFFFFFFFFu || cap == 0) {
-		/* Still poke a stereo unmute; harmless if the amp is absent. */
-		uint32_t payload = output ? 0xB000u : 0x7000u;
-		setv(node, VERB_SET_AMP, payload);
+	uint32_t wcap = getp(node, PARAM_WIDGET_CAPS);
+	uint32_t need = output ? WCAP_OUT_AMP : WCAP_IN_AMP;
+	if (wcap == 0xFFFFFFFFu || (wcap & need) == 0) {
 		return;
 	}
-	uint32_t offset = cap & 0x7Fu;
+	uint32_t cap = getp(node, output ? PARAM_AMP_OUT_CAP : PARAM_AMP_IN_CAP);
+	uint32_t offset = (cap == 0xFFFFFFFFu) ? 0 : (cap & 0x7Fu);
 	uint32_t payload = (output ? 0xB000u : 0x7000u) | offset;
 	setv(node, VERB_SET_AMP, payload);
 }
@@ -435,40 +431,6 @@ static int bind_codec(uint8_t codec)
 	return 0;
 }
 
-/** Reset CORB/RIRB rings. AMD SB710 can ignore the RP reset bit. */
-static int corb_start(void)
-{
-	mmw8(HDA_CORBCTL, 0);
-	mmw8(HDA_RIRBCTL, 0);
-	hda_delay(50);
-
-	mmw32(HDA_CORBLBASE, corb_phys);
-	mmw32(HDA_CORBUBASE, 0);
-	mmw32(HDA_RIRBLBASE, rirb_phys);
-	mmw32(HDA_RIRBUBASE, 0);
-
-	mmw8(HDA_CORBSIZE, 0x02);	/* 256 entries if supported */
-	mmw8(HDA_RIRBSIZE, 0x02);
-
-	mmw16(HDA_CORBRP, 0x8000);
-	for (unsigned i = 0; i < 2000 && !(mmr16(HDA_CORBRP) & 0x8000); i++) {
-		hda_delay(1);
-	}
-	mmw16(HDA_CORBRP, 0);
-	for (unsigned i = 0; i < 2000 && (mmr16(HDA_CORBRP) & 0x8000); i++) {
-		hda_delay(1);
-	}
-	mmw16(HDA_CORBWP, 0);
-	mmw16(HDA_RIRBWP, 0x8000);
-	mmw16(HDA_RINTCNT, 1);
-	rirb_rp = 0;
-
-	mmw8(HDA_CORBCTL, CORBCTL_RUN);
-	mmw8(HDA_RIRBCTL, RIRBCTL_DMA | RIRBCTL_OIE);
-	hda_delay(50);
-	return (mmr8(HDA_CORBCTL) & CORBCTL_RUN) != 0;
-}
-
 /** Controller reset and codec wake. */
 static int controller_reset(void)
 {
@@ -533,32 +495,38 @@ bool hda_init(void)
 		}
 	}
 	if (dev == NULL) {
+		tty_printf("hda: no PCI HDA function (%u audio pci)\n", count);
 		return false;
 	}
 
 	uint64_t bar = pci_mmio_bar(dev, 0);
 	if (bar == 0) {
+		tty_printf("hda: no MMIO BAR on %x:%x\n",
+			(unsigned)dev->vendor, (unsigned)dev->device);
 		return false;
 	}
 	pci_enable_mem_bm(dev);
+	if (!phys_map_mmio(bar, 0x4000)) {
+		tty_printf("hda: MMIO map failed bar 0x%lx\n", (unsigned long)bar);
+		return false;
+	}
 	mmio = phys_to_virt(bar);
 
 	if (!controller_reset()) {
+		tty_printf("hda: controller reset failed\n");
 		return false;
 	}
 
 	uint16_t gcap = mmr16(HDA_GCAP);
 	unsigned iss = (gcap >> 8) & 0xFu;
 	sd_off = 0x80u + iss * 0x20u;
+	tty_printf("hda: gcap 0x%x iss %u statests 0x%x\n",
+		(unsigned)gcap, iss, (unsigned)mmr16(HDA_STATESTS));
 
-	corb = phys_alloc(HDA_CORB_ENTRIES * 4u, &corb_phys);
-	rirb = phys_alloc(HDA_CORB_ENTRIES * 8u, &rirb_phys);
 	bdl = phys_alloc(sizeof(struct hda_bdl) * HDA_PERIODS, &bdl_phys);
 	pcm = phys_alloc(HDA_PERIODS * 256u * 4u, &pcm_phys);
-	if (corb == NULL || rirb == NULL || bdl == NULL || pcm == NULL) {
-		return false;
-	}
-	if (!corb_start()) {
+	if (bdl == NULL || pcm == NULL) {
+		tty_printf("hda: DMA alloc failed\n");
 		return false;
 	}
 
@@ -582,6 +550,7 @@ bool hda_init(void)
 		}
 	}
 	if (!bound) {
+		tty_printf("hda: no output path (vid 0x%x)\n", codec_vid);
 		return false;
 	}
 
@@ -686,13 +655,15 @@ bool hda_start(uint32_t frames, void (*fill)(int16_t *dst, uint32_t frames))
 
 	setv(nid_dac, VERB_SET_CONV_FMT, HDA_FMT_48K_S16_2CH);
 	setv(nid_dac, VERB_SET_STREAM_CHAN, (HDA_STREAM_TAG << 4));
-	setv(nid_pin, VERB_SET_PIN_CTRL, 0x40);
 	unmute(nid_dac, 1);
 	unmute(nid_pin, 1);
 
-	/* Stream tag lives in SDCTL bits 23:20 (high nibble of byte 2). */
-	mmw8(sd_off + 2, (uint8_t)(HDA_STREAM_TAG << 4));
-	mmw8(sd_off + SD_CTL, SD_CTL_RUN);
+	/*
+	 * Stream tag is SDCTL bits 23:20. Write tag+RUN as one dword so a
+	 * byte store cannot drop the tag (QEMU and SB710 both treat CTL as
+	 * a 24-bit register overlapping STS).
+	 */
+	mmw32(sd_off + SD_CTL, (HDA_STREAM_TAG << 20) | SD_CTL_RUN);
 	running = 1;
 	return true;
 }
@@ -740,7 +711,7 @@ unsigned hda_service(void (*fill)(int16_t *dst, uint32_t frames))
 	}
 	if ((mmr8(sd_off + SD_CTL) & SD_CTL_RUN) == 0) {
 		underruns++;
-		mmw8(sd_off + SD_CTL, SD_CTL_RUN);
+		mmw32(sd_off + SD_CTL, (HDA_STREAM_TAG << 20) | SD_CTL_RUN);
 	}
 	return filled;
 }

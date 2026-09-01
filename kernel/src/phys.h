@@ -2,6 +2,7 @@
 #define AUDIOS_PHYS_H
 
 #include <limine.h>
+#include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 
@@ -16,5 +17,11 @@ uint64_t phys_hhdm(void);
 
 /** Convert a physical address into an HHDM pointer. */
 void *phys_to_virt(uint64_t phys);
+
+/**
+ * Map `bytes` of MMIO at `phys` into the HHDM as uncacheable pages.
+ * Limine's HHDM does not include PCI BARs at base revision 3+.
+ */
+bool phys_map_mmio(uint64_t phys, size_t bytes);
 
 #endif
