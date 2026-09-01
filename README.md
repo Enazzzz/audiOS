@@ -19,6 +19,9 @@ audiOS>
 - `play file.wav` from the disk (Limine modules remain a fallback)
 - `tone` with no duration keeps playing until `stop`
 - Up / Down arrows recall previous commands (PowerShell-style)
+- Console scroll stays in RAM so the picture does not hitch and audio
+  does not underrun
+- Falls back to Intel ICH AC97 when that is the only controller (QEMU)
 
 ```
 audiOS> ls
