@@ -62,6 +62,15 @@ void tone_cmd(int argc, char **argv);
 void play_cmd(int argc, char **argv);
 void stop_cmd(void);
 
+/**
+ * Play interleaved stereo s16.
+ * `loops`: 1 = once, -1 = until stop, n = n times.
+ */
+bool audio_play_pcm(const int16_t *pcm, uint32_t frames, uint32_t rate, int loops);
+
+/** Record the output mix into `dst` for `frames` engine frames. */
+bool audio_rec_start(int16_t *dst, uint32_t frames);
+
 bool audio_stream_open(audio_stream_t **out, uint32_t rate, uint8_t bits, uint8_t channels);
 void audio_stream_close(audio_stream_t *stream);
 

@@ -1,5 +1,6 @@
 #include "shell.h"
 #include "audio.h"
+#include "clip.h"
 #include "cpu.h"
 #include "fs.h"
 #include "kbd.h"
@@ -11,9 +12,10 @@
 #include "tty.h"
 #include "version.h"
 
-#define LINE_MAX	128
-#define ARG_MAX		8
+#define LINE_MAX	256
+#define ARG_MAX		24
 #define HIST_MAX	32
+#define SCRIPT_MAX	4096
 
 static char line[LINE_MAX];
 static unsigned line_len;
@@ -100,8 +102,10 @@ static void cmd_help(void)
 	tty_puts("  audio status      runtime statistics\n");
 	tty_puts("  audio test        continuous test tone\n");
 	tty_puts("  tone              sine/square/saw/noise (no duration = until stop)\n");
-	tty_puts("  play <file.wav>   play a PCM WAV (disk or module)\n");
+	tty_puts("  play <clip|file>  play a clip or PCM WAV (loop|n)\n");
 	tty_puts("  stop              halt playback\n");
+	tty_puts("  music             clip / DSP / seq / rec commands\n");
+	tty_puts("  script <file>     run commands from a text file\n");
 	tty_puts("  ls [path]         list directory\n");
 	tty_puts("  cd [path]         change directory\n");
 	tty_puts("  pwd               print working directory\n");
@@ -208,6 +212,61 @@ static void hist_down(void)
 }
 
 /** Dispatch a complete command line. Empty lines are ignored. */
+static void shell_dispatch(char *cmd);
+
+/** Run each non-comment line of a text file as a command. */
+static void cmd_script(const char *path)
+{
+	static int depth;
+	static char buf[SCRIPT_MAX];
+	if (path == NULL || path[0] == '\0') {
+		tty_set_color(TTY_COL_ERR);
+		tty_puts("usage: script <file>\n");
+		tty_set_color(TTY_COL_FG);
+		return;
+	}
+	if (depth > 4) {
+		tty_set_color(TTY_COL_ERR);
+		tty_puts("script: too much nesting\n");
+		tty_set_color(TTY_COL_FG);
+		return;
+	}
+	uint32_t n = 0;
+	if (!fs_read_file(path, buf, SCRIPT_MAX - 1u, &n) || n == 0) {
+		tty_set_color(TTY_COL_ERR);
+		tty_printf("script: %s\n", fs_error()[0] ? fs_error() : "file not found");
+		tty_set_color(TTY_COL_FG);
+		return;
+	}
+	buf[n] = '\0';
+	depth++;
+	char *p = buf;
+	while (*p) {
+		char *line = p;
+		while (*p && *p != '\n' && *p != '\r') {
+			p++;
+		}
+		char save = *p;
+		*p = '\0';
+		char *s = line;
+		while (*s == ' ' || *s == '\t') {
+			s++;
+		}
+		if (*s != '\0' && *s != '#') {
+			char tmp[LINE_MAX];
+			ksnprintf(tmp, sizeof(tmp), "%s", s);
+			shell_dispatch(tmp);
+		}
+		*p = save;
+		if (*p == '\r') {
+			p++;
+		}
+		if (*p == '\n') {
+			p++;
+		}
+	}
+	depth--;
+}
 static void shell_dispatch(char *cmd)
 {
 	trim_inplace(cmd);
@@ -260,10 +319,14 @@ static void shell_dispatch(char *cmd)
 		fs_cmd_info(argc, argv);
 	} else if (strcmp(argv[0], "storage") == 0) {
 		fs_cmd_storage();
+	} else if (strcmp(argv[0], "script") == 0) {
+		cmd_script(argc > 1 ? argv[1] : "");
 	} else if (strcmp(argv[0], "mount") == 0) {
 		fs_cmd_mount();
 	} else if (strcmp(argv[0], "reboot") == 0) {
 		system_reboot();
+	} else if (music_is_verb(argv[0])) {
+		music_cmd(argc, argv);
 	} else {
 		tty_set_color(TTY_COL_ERR);
 		tty_puts("no such command -- try help\n");

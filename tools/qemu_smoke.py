@@ -1,4 +1,4 @@
-"""Drive audiOS 0.0.5 HDA + FAT commands over QEMU serial and check capture."""
+"""Drive audiOS 0.0.6 HDA + FAT + music commands over QEMU serial and check capture."""
 
 from __future__ import annotations
 
@@ -120,14 +120,14 @@ def main() -> int:
     os.close(slave)
     try:
         text = wait_for(master, proc, PROMPT, 45.0)
-        if "audiOS 0.0.5" not in text:
+        if "audiOS 0.0.6" not in text:
             raise RuntimeError(f"banner missing\n{text}")
         if "mounted FAT32" not in text and "USB MSC" not in text:
             raise RuntimeError(f"filesystem did not mount\n{text}")
 
         send(master, "help")
         text = wait_for(master, proc, PROMPT, 5.0)
-        if "tone" not in text or "play" not in text or "storage" not in text:
+        if "tone" not in text or "play" not in text or "storage" not in text or "music" not in text:
             raise RuntimeError(f"help missing commands\n{text}")
 
         send(master, "audio")
@@ -265,9 +265,63 @@ def main() -> int:
         if "removed" not in text:
             raise RuntimeError(f"rm dir failed\n{text}")
 
+        send(master, "load audio/test.wav a")
+        text = wait_for(master, proc, PROMPT, 10.0)
+        if "loaded" not in text.lower():
+            raise RuntimeError(f"load wav failed\n{text}")
+
+        send(master, "clip a")
+        text = wait_for(master, proc, PROMPT, 5.0)
+        if "Hz" not in text or "frames" not in text:
+            raise RuntimeError(f"clip metadata failed\n{text}")
+
+        send(master, "slice a b 0 2000")
+        text = wait_for(master, proc, PROMPT, 5.0)
+        if "sliced" not in text.lower():
+            raise RuntimeError(f"slice failed\n{text}")
+
+        send(master, "proc b gain 0.8 lpf 4000 reverse")
+        text = wait_for(master, proc, PROMPT, 8.0)
+        if "proc" not in text.lower():
+            raise RuntimeError(f"proc chain failed\n{text}")
+
+        send(master, "save b audio/out.wav")
+        text = wait_for(master, proc, PROMPT, 15.0)
+        if "saved" not in text.lower():
+            raise RuntimeError(f"save wav failed\n{text}")
+
+        send(master, "play b")
+        text = wait_for(master, proc, "playing", 8.0)
+        drain(master, 0.4)
+        send(master, "stop")
+        wait_for(master, proc, PROMPT, 5.0)
+
+        send(master, "seed 1")
+        wait_for(master, proc, PROMPT, 5.0)
+        send(master, "noise n 100ms 0.2")
+        text = wait_for(master, proc, PROMPT, 5.0)
+        if "noise" not in text.lower():
+            raise RuntimeError(f"noise failed\n{text}")
+
+        send(master, "seq clear")
+        wait_for(master, proc, PROMPT, 5.0)
+        send(master, "seq add b 0")
+        wait_for(master, proc, PROMPT, 5.0)
+        send(master, "seq add n 50ms")
+        wait_for(master, proc, PROMPT, 5.0)
+        send(master, "seq render pat")
+        text = wait_for(master, proc, PROMPT, 8.0)
+        if "render" not in text.lower():
+            raise RuntimeError(f"seq render failed\n{text}")
+
+        send(master, "sample b 0")
+        text = wait_for(master, proc, PROMPT, 5.0)
+        if "L=" not in text:
+            raise RuntimeError(f"sample access failed\n{text}")
+
         send(master, "version")
         text = wait_for(master, proc, PROMPT, 5.0)
-        if "0.0.5" not in text:
+        if "0.0.6" not in text:
             raise RuntimeError(f"still alive after audio errors?\n{text}")
 
         send(master, "reboot")
@@ -284,15 +338,15 @@ def main() -> int:
     analyze = Path(__file__).with_name("analyze_tone.py")
     if not capture.is_file() or capture.stat().st_size < 1024:
         print(f"warning: capture {capture} missing or tiny; skipping tone FFT", file=sys.stderr)
-        print("audiOS 0.0.5 smoke test passed (commands only)")
+        print("audiOS 0.0.6 smoke test passed (commands only)")
         return 0
 
     rc = subprocess.call([sys.executable, str(analyze), str(capture), "440"])
     if rc != 0:
         print("command checks passed but captured audio was not a 440 Hz tone", file=sys.stderr)
         return 1
-    print("audiOS 0.0.5 smoke test passed")
-    print("checked: HDA, FAT32 USB, ls/cd/cp/mv/rm, play from disk, 440 Hz capture")
+    print("audiOS 0.0.6 smoke test passed")
+    print("checked: HDA, FAT32 USB, clips load/slice/proc/save, seq, 440 Hz capture")
     return 0
 
 

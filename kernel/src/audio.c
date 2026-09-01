@@ -1,18 +1,15 @@
 #include "audio.h"
 #include "ac97.h"
-#include "files.h"
-#include "fs.h"
+#include "clip.h"
 #include "hda.h"
 #include "klib.h"
 #include "pci.h"
-#include "phys.h"
 #include "tty.h"
 #include "version.h"
 
 #include <stddef.h>
 
 #define TONE_LUT_N		256
-#define WAV_MAX_FRAMES		(256u * 1024u)
 
 static const int16_t sine_lut[TONE_LUT_N] = {
 	     0,    804,   1608,   2410,   3212,   4011,   4808,   5602,
@@ -57,11 +54,16 @@ static uint32_t phase_inc;
 static uint32_t amp_mille = 500;
 static tone_kind_t tone_kind;
 static uint64_t frames_left;
-static int source_is_wav;
-static int16_t *wav_pcm;
-static uint32_t wav_frames;
-static uint32_t wav_index;
-static uint32_t wav_phys;
+static int source_is_pcm;
+static const int16_t *play_pcm;
+static uint32_t play_frames;
+static uint64_t play_frac;
+static uint64_t play_step;
+static int play_loops;
+static int16_t *rec_pcm;
+static uint32_t rec_frames;
+static uint32_t rec_index;
+static int rec_own_play;
 static int silent_backend;
 static uint32_t rs_pos;
 static uint32_t rs_idx;
@@ -122,32 +124,68 @@ static int16_t osc_next(void)
 	return (int16_t)((int32_t)s * (int32_t)amp_mille / 1000);
 }
 
+/** Tap the live mix into an in-progress `rec` buffer. */
+static void rec_tap(int16_t l, int16_t r)
+{
+	if (rec_pcm == NULL || rec_index >= rec_frames) {
+		return;
+	}
+	rec_pcm[rec_index * 2u] = l;
+	rec_pcm[rec_index * 2u + 1u] = r;
+	rec_index++;
+	if (rec_index >= rec_frames) {
+		rec_pcm = NULL;
+		if (rec_own_play) {
+			system.play = AUDIO_PLAY_STOPPING;
+		}
+	}
+}
+
 /** Next stereo engine frame as s16 L/R. */
 static void engine_frame(int16_t *l, int16_t *r)
 {
 	if (system.play != AUDIO_PLAY_PLAYING && system.play != AUDIO_PLAY_STOPPING) {
 		*l = 0;
 		*r = 0;
+		rec_tap(0, 0);
 		return;
 	}
-	if (source_is_wav) {
-		if (wav_index >= wav_frames) {
-			*l = 0;
-			*r = 0;
-			if (frames_left != UINT64_MAX) {
-				system.play = AUDIO_PLAY_STOPPING;
+	if (source_is_pcm) {
+		for (;;) {
+			uint32_t si = (uint32_t)(play_frac >> 16);
+			if (si < play_frames) {
+				*l = play_pcm[si * 2u];
+				*r = play_pcm[si * 2u + 1u];
+				play_frac += play_step;
+				rec_tap(*l, *r);
+				return;
 			}
-			return;
+			uint64_t span = (uint64_t)play_frames << 16;
+			if (span == 0) {
+				break;
+			}
+			if (play_loops < 0) {
+				play_frac -= span;
+				continue;
+			}
+			if (play_loops > 1) {
+				play_loops--;
+				play_frac -= span;
+				continue;
+			}
+			break;
 		}
-		*l = wav_pcm[wav_index * 2];
-		*r = wav_pcm[wav_index * 2 + 1];
-		wav_index++;
+		*l = 0;
+		*r = 0;
+		rec_tap(0, 0);
+		system.play = AUDIO_PLAY_STOPPING;
 		return;
 	}
 	if (frames_left != UINT64_MAX) {
 		if (frames_left == 0) {
 			*l = 0;
 			*r = 0;
+			rec_tap(0, 0);
 			system.play = AUDIO_PLAY_STOPPING;
 			return;
 		}
@@ -156,6 +194,7 @@ static void engine_frame(int16_t *l, int16_t *r)
 	int16_t s = osc_next();
 	*l = s;
 	*r = s;
+	rec_tap(s, s);
 }
 
 /** Fill one hardware period of interleaved stereo s16, resampling as needed. */
@@ -201,6 +240,8 @@ static void audio_stop_internal(void)
 	}
 	system.play = AUDIO_PLAY_STOPPED;
 	system.stream_count = 0;
+	rec_pcm = NULL;
+	rec_own_play = 0;
 }
 
 /** Parse a decimal into milles (0.5 → 500). */
@@ -283,120 +324,6 @@ static uint32_t parse_duration_ms(const char *s)
 	return whole * 1000 + frac;
 }
 
-/** Read little-endian integers from a WAV blob. */
-static uint16_t r16(const uint8_t *p)
-{
-	return (uint16_t)(p[0] | (p[1] << 8));
-}
-
-static uint32_t r32(const uint8_t *p)
-{
-	return (uint32_t)p[0] | ((uint32_t)p[1] << 8) | ((uint32_t)p[2] << 16) | ((uint32_t)p[3] << 24);
-}
-
-/**
- * Decode PCM WAV into wav_pcm as stereo s16 at the engine rate.
- * Rejects compressed / float formats without crashing.
- */
-static bool wav_load(const uint8_t *data, size_t size)
-{
-	if (size < 44 || memcmp(data, "RIFF", 4) != 0 || memcmp(data + 8, "WAVE", 4) != 0) {
-		audio_fail("unsupported format (not PCM WAV)");
-		return false;
-	}
-	size_t off = 12;
-	uint16_t fmt = 0;
-	uint16_t ch = 0;
-	uint32_t rate = 0;
-	uint16_t bits = 0;
-	const uint8_t *pcm = NULL;
-	size_t pcm_bytes = 0;
-	while (off + 8 <= size) {
-		const uint8_t *ck = data + off;
-		uint32_t cksz = r32(ck + 4);
-		if (off + 8 + cksz > size) {
-			break;
-		}
-		if (memcmp(ck, "fmt ", 4) == 0 && cksz >= 16) {
-			fmt = r16(ck + 8);
-			ch = r16(ck + 10);
-			rate = r32(ck + 12);
-			bits = r16(ck + 22);
-		} else if (memcmp(ck, "data", 4) == 0) {
-			pcm = ck + 8;
-			pcm_bytes = cksz;
-		}
-		off += 8 + cksz;
-		if (cksz & 1) {
-			off++;
-		}
-	}
-	if (fmt != 1 || pcm == NULL || ch < 1 || ch > 2 || (bits != 8 && bits != 16 && bits != 24)) {
-		audio_fail("unsupported format (need PCM 8/16/24-bit mono or stereo)");
-		return false;
-	}
-	if (rate < 8000 || rate > 192000) {
-		audio_fail("unsupported sample rate");
-		return false;
-	}
-	uint32_t src_frames = (uint32_t)(pcm_bytes / (ch * (bits / 8)));
-	if (src_frames == 0) {
-		audio_fail("empty WAV data");
-		return false;
-	}
-	uint32_t dst_frames = (uint32_t)((uint64_t)src_frames * system.sample_rate / rate);
-	if (dst_frames > WAV_MAX_FRAMES) {
-		audio_fail("WAV too long");
-		return false;
-	}
-	if (wav_pcm == NULL) {
-		wav_pcm = phys_alloc(WAV_MAX_FRAMES * 4u, &wav_phys);
-	}
-	if (wav_pcm == NULL) {
-		audio_fail("out of memory for WAV");
-		return false;
-	}
-	uint32_t pos = 0;
-	uint32_t step = (uint32_t)(((uint64_t)rate << 16) / system.sample_rate);
-	for (uint32_t i = 0; i < dst_frames; i++) {
-		uint32_t si = pos >> 16;
-		if (si >= src_frames) {
-			si = src_frames - 1;
-		}
-		int32_t l;
-		int32_t r;
-		const uint8_t *sp = pcm + si * ch * (bits / 8);
-		if (bits == 8) {
-			l = ((int32_t)sp[0] - 128) << 8;
-			r = (ch == 2) ? ((int32_t)sp[1] - 128) << 8 : l;
-		} else if (bits == 16) {
-			l = (int16_t)r16(sp);
-			r = (ch == 2) ? (int16_t)r16(sp + 2) : l;
-		} else {
-			int32_t s24 = (int32_t)(sp[0] | (sp[1] << 8) | (sp[2] << 16));
-			if (s24 & 0x800000) {
-				s24 |= (int32_t)0xFF000000;
-			}
-			l = s24 >> 8;
-			if (ch == 2) {
-				s24 = (int32_t)(sp[3] | (sp[4] << 8) | (sp[5] << 16));
-				if (s24 & 0x800000) {
-					s24 |= (int32_t)0xFF000000;
-				}
-				r = s24 >> 8;
-			} else {
-				r = l;
-			}
-		}
-		wav_pcm[i * 2] = (int16_t)l;
-		wav_pcm[i * 2 + 1] = (int16_t)r;
-		pos += step;
-	}
-	wav_frames = dst_frames;
-	wav_index = 0;
-	return true;
-}
-
 /** Begin playback on AC97 or the silent backend. */
 static bool audio_start_play(void)
 {
@@ -452,6 +379,67 @@ static bool audio_start_play(void)
 	return true;
 }
 
+/**
+ * Play interleaved stereo s16, converting `rate` to the engine rate on the fly.
+ * `loops` is 1 = once, -1 = until stop, n = n times.
+ */
+bool audio_play_pcm(const int16_t *pcm, uint32_t frames, uint32_t rate, int loops)
+{
+	if (system.play == AUDIO_PLAY_PLAYING) {
+		audio_fail("already playing (stop first)");
+		return false;
+	}
+	if (pcm == NULL || frames == 0 || rate == 0) {
+		audio_fail("empty clip");
+		return false;
+	}
+	play_pcm = pcm;
+	play_frames = frames;
+	play_frac = 0;
+	play_step = ((uint64_t)rate << 16) / system.sample_rate;
+	if (play_step == 0) {
+		play_step = 1;
+	}
+	play_loops = loops < 0 ? -1 : (loops == 0 ? 1 : loops);
+	source_is_pcm = 1;
+	frames_left = UINT64_MAX;
+	audio_ok();
+	if (!audio_start_play()) {
+		return false;
+	}
+	return true;
+}
+
+/**
+ * Record the output mix into `dst`. Starts a silent generator if nothing
+ * is already playing so the engine actually produces frames.
+ */
+bool audio_rec_start(int16_t *dst, uint32_t frames)
+{
+	if (dst == NULL || frames == 0) {
+		audio_fail("empty rec buffer");
+		return false;
+	}
+	rec_pcm = dst;
+	rec_frames = frames;
+	rec_index = 0;
+	if (system.play == AUDIO_PLAY_PLAYING) {
+		rec_own_play = 0;
+		audio_ok();
+		return true;
+	}
+	rec_own_play = 1;
+	tone_kind = TONE_SILENCE;
+	source_is_pcm = 0;
+	frames_left = frames;
+	audio_ok();
+	if (!audio_start_play()) {
+		rec_pcm = NULL;
+		return false;
+	}
+	return true;
+}
+
 /** Detect hardware, install defaults, and mark the subsystem ready. */
 void audio_init(void)
 {
@@ -483,6 +471,7 @@ void audio_init(void)
 		ksnprintf(system.last_error, sizeof(system.last_error),
 			"%s", "no analog output (playback is silent)");
 	}
+	clip_init();
 }
 
 /** Pump DMA so playback continues while the shell stays responsive. */
@@ -760,7 +749,7 @@ void audio_cmd(int argc, char **argv)
 		phase = 0;
 		phase_inc = (uint32_t)(440ull * 4294967296ull / system.sample_rate);
 		frames_left = UINT64_MAX;
-		source_is_wav = 0;
+		source_is_pcm = 0;
 		audio_ok();
 		if (!audio_start_play()) {
 			return;
@@ -812,7 +801,7 @@ void tone_cmd(int argc, char **argv)
 		uint32_t ms = parse_duration_ms(dur_s);
 		frames_left = (uint64_t)system.sample_rate * ms / 1000ull;
 	}
-	source_is_wav = 0;
+	source_is_pcm = 0;
 	audio_ok();
 	if (!audio_start_play()) {
 		return;
@@ -828,49 +817,38 @@ void tone_cmd(int argc, char **argv)
 void play_cmd(int argc, char **argv)
 {
 	if (argc < 2) {
-		tty_puts("usage: play <file.wav>\n");
+		tty_puts("usage: play <clip|file.wav> [loop|n]\n");
 		return;
 	}
-	if (system.play == AUDIO_PLAY_PLAYING) {
-		audio_fail("already playing (stop first)");
-		return;
-	}
-	const struct audio_file *f = files_find(argv[1]);
-	const uint8_t *data = NULL;
-	size_t size = 0;
-	const char *shown = argv[1];
-	static uint8_t *disk_wav;
-	static uint32_t disk_wav_phys;
-	if (fs_ready()) {
-		if (disk_wav == NULL) {
-			disk_wav = phys_alloc(512u * 1024u, &disk_wav_phys);
-		}
-		uint32_t n = 0;
-		if (disk_wav != NULL && fs_read_file(argv[1], disk_wav, 512u * 1024u, &n) && n > 0) {
-			data = disk_wav;
-			size = n;
-		}
-	}
-	if (data == NULL) {
-		if (f == NULL) {
-			audio_fail("file not found");
+	struct clip *c = clip_find(argv[1]);
+	if (c == NULL) {
+		c = clip_load_file(argv[1], ".play");
+		if (c == NULL) {
 			return;
 		}
-		data = f->data;
-		size = f->size;
-		shown = f->name;
 	}
-	if (!wav_load(data, size)) {
-		return;
+	int loops = 1;
+	if (argc > 2) {
+		if (strcmp(argv[2], "loop") == 0) {
+			loops = -1;
+		} else {
+			int n = 0;
+			const char *p = argv[2];
+			while (*p >= '0' && *p <= '9') {
+				n = n * 10 + (*p - '0');
+				p++;
+			}
+			if (n >= 1) {
+				loops = n;
+			}
+		}
 	}
-	source_is_wav = 1;
-	frames_left = wav_frames;
-	audio_ok();
-	if (!audio_start_play()) {
+	if (!audio_play_pcm(c->pcm, c->frames, c->rate, loops)) {
 		return;
 	}
 	tty_set_color(TTY_COL_AUDIO);
-	tty_printf("playing %s...\n", shown);
+	tty_printf("playing %s%s...\n", c->name[0] == '.' ? argv[1] : c->name,
+		loops < 0 ? " loop" : "");
 	tty_set_color(TTY_COL_FG);
 }
 
