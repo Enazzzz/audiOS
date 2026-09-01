@@ -1,6 +1,7 @@
 #include "audio.h"
 #include "ac97.h"
 #include "files.h"
+#include "hda.h"
 #include "klib.h"
 #include "pci.h"
 #include "phys.h"
@@ -160,7 +161,14 @@ static void engine_frame(int16_t *l, int16_t *r)
 static void fill_period(int16_t *dst, uint32_t hw_frames)
 {
 	uint32_t src_rate = system.sample_rate;
-	uint32_t dst_rate = silent_backend ? src_rate : ac97_hw_rate();
+	uint32_t dst_rate = system.sample_rate;
+	if (!silent_backend) {
+		if (hda_present() && selected_device == hda_pci_index()) {
+			dst_rate = hda_hw_rate();
+		} else if (ac97_present()) {
+			dst_rate = ac97_hw_rate();
+		}
+	}
 	if (dst_rate == 0) {
 		dst_rate = src_rate;
 	}
@@ -184,6 +192,9 @@ static void fill_period(int16_t *dst, uint32_t hw_frames)
 /** Halt DMA and return the engine to idle. */
 static void audio_stop_internal(void)
 {
+	if (hda_present()) {
+		hda_stop();
+	}
 	if (ac97_present()) {
 		ac97_stop();
 	}
@@ -397,7 +408,23 @@ static bool audio_start_play(void)
 	hold_r = 0;
 	system.play = AUDIO_PLAY_PLAYING;
 	system.stream_count = 1;
-	/* Only the bound AC97 function can emit samples in v0.0.2. */
+	/* Prefer HDA (ASRock 960GM-GS3 FX / SB710). AC97 remains a fallback. */
+	if (hda_present() && selected_device == hda_pci_index()) {
+		if (!hda_alive()) {
+			system.play = AUDIO_PLAY_STOPPED;
+			system.stream_count = 0;
+			audio_fail("device disconnection");
+			return false;
+		}
+		silent_backend = 0;
+		if (!hda_start(system.buffer_frames, fill_period)) {
+			system.play = AUDIO_PLAY_STOPPED;
+			system.stream_count = 0;
+			audio_fail("playback failure (HDA DMA start)");
+			return false;
+		}
+		return true;
+	}
 	if (ac97_present() && selected_device == ac97_pci_index()) {
 		if (!ac97_alive()) {
 			system.play = AUDIO_PLAY_STOPPED;
@@ -415,8 +442,8 @@ static bool audio_start_play(void)
 		return true;
 	}
 	silent_backend = 1;
-	if (pci_device_count() > 0 && selected_device != ac97_pci_index()) {
-		audio_fail("unsupported configuration (HDA output is not in 0.0.2; select AC97)");
+	if (pci_device_count() > 0) {
+		audio_fail("unsupported configuration (select the HDA or AC97 device)");
 		system.play = AUDIO_PLAY_STOPPED;
 		system.stream_count = 0;
 		return false;
@@ -434,16 +461,26 @@ void audio_init(void)
 	system.buffer_frames = 64;
 	system.status = AUDIO_INITIALIZING;
 	selected_device = 0;
-	if (ac97_init()) {
-		uint32_t idx = ac97_pci_index();
+	int have_out = 0;
+	if (hda_init()) {
+		uint32_t idx = hda_pci_index();
 		selected_device = (idx == UINT32_MAX) ? 0 : idx;
-		ksnprintf(system.device_name, sizeof(system.device_name), "%s", ac97_name());
-		system.status = AUDIO_READY;
-	} else {
+		ksnprintf(system.device_name, sizeof(system.device_name), "%s", hda_name());
+		have_out = 1;
+	}
+	if (ac97_init()) {
+		if (!have_out) {
+			uint32_t idx = ac97_pci_index();
+			selected_device = (idx == UINT32_MAX) ? 0 : idx;
+			ksnprintf(system.device_name, sizeof(system.device_name), "%s", ac97_name());
+			have_out = 1;
+		}
+	}
+	system.status = AUDIO_READY;
+	if (!have_out) {
 		ksnprintf(system.device_name, sizeof(system.device_name), "%s", "none");
-		system.status = AUDIO_READY;	/* engine still runs; output is silent */
 		ksnprintf(system.last_error, sizeof(system.last_error),
-			"%s", "no AC97 output (playback is silent)");
+			"%s", "no analog output (playback is silent)");
 	}
 }
 
@@ -453,7 +490,20 @@ void audio_service(void)
 	if (system.play == AUDIO_PLAY_STOPPED) {
 		return;
 	}
-	if (!silent_backend && ac97_present()) {
+	if (silent_backend) {
+		return;
+	}
+	if (hda_present() && selected_device == hda_pci_index()) {
+		if (!hda_alive()) {
+			audio_stop_internal();
+			audio_fail("device disconnection");
+			return;
+		}
+		hda_service(fill_period);
+		system.underruns = hda_underruns();
+		return;
+	}
+	if (ac97_present()) {
 		if (!ac97_alive()) {
 			audio_stop_internal();
 			audio_fail("device disconnection");
@@ -563,7 +613,7 @@ void audio_print_devices(void)
 	for (unsigned i = 0; i < n; i++) {
 		const struct pci_device *d = pci_device_at(i);
 		const char *kind = "audio";
-		if (d->subclass == 0x03) {
+		if (d->subclass == 0x03 || (d->vendor == 0x1002 && d->device == 0x4383)) {
 			kind = "HDA";
 		} else if (d->vendor == 0x8086 && d->device == 0x2415) {
 			kind = "AC97";
@@ -582,7 +632,12 @@ void audio_print_info(void)
 	tty_puts("Audio device info\n");
 	tty_set_color(TTY_COL_DIM);
 	tty_printf("selected:  %u (%s)\n", selected_device, system.device_name);
-	if (ac97_present()) {
+	if (hda_present() && selected_device == hda_pci_index()) {
+		tty_printf("backend:  HDA analog out\n");
+		tty_printf("board:     ASRock 960GM-GS3 FX (SB710 + ALC662)\n");
+		tty_printf("hw rate:   %u Hz\n", hda_hw_rate());
+		tty_printf("hw format: 16-bit stereo PCM\n");
+	} else if (ac97_present() && selected_device == ac97_pci_index()) {
 		tty_printf("backend:  AC97 PCM out\n");
 		tty_printf("hw rate:   %u Hz\n", ac97_hw_rate());
 		tty_printf("hw format: 16-bit stereo PCM\n");
@@ -664,7 +719,9 @@ static void audio_set(int argc, char **argv)
 		}
 		selected_device = id;
 		const struct pci_device *d = pci_device_at(id);
-		if (id == ac97_pci_index()) {
+		if (id == hda_pci_index()) {
+			ksnprintf(system.device_name, sizeof(system.device_name), "%s", hda_name());
+		} else if (id == ac97_pci_index()) {
 			ksnprintf(system.device_name, sizeof(system.device_name), "%s", ac97_name());
 		} else if (d) {
 			ksnprintf(system.device_name, sizeof(system.device_name),
