@@ -143,6 +143,31 @@ void pci_enable_io_bm(const struct pci_device *dev)
 	pci_write16(dev->bus, dev->slot, dev->func, 0x04, cmd);
 }
 
+/** Enable memory space and bus mastering (needed for HDA). */
+void pci_enable_mem_bm(const struct pci_device *dev)
+{
+	uint16_t cmd = pci_read16(dev->bus, dev->slot, dev->func, 0x04);
+	cmd |= 0x0006;	/* memory space + bus master */
+	pci_write16(dev->bus, dev->slot, dev->func, 0x04, cmd);
+}
+
+/** Physical MMIO address of BAR `index` (0 if the BAR is I/O). */
+uint64_t pci_mmio_bar(const struct pci_device *dev, unsigned index)
+{
+	if (index > 5) {
+		return 0;
+	}
+	uint32_t bar = dev->bar[index];
+	if (bar & 1u) {
+		return 0;
+	}
+	uint64_t addr = (uint64_t)(bar & ~0xFu);
+	if ((bar & 0x6u) == 0x4u && index + 1u <= 5u) {
+		addr |= (uint64_t)dev->bar[index + 1u] << 32;
+	}
+	return addr;
+}
+
 /** I/O port address stored in a BAR (low bit 1). */
 uint16_t pci_io_bar(uint32_t bar)
 {

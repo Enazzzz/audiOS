@@ -107,6 +107,7 @@ static void cmd_version(void)
 	tty_puts(AUDIOS_BANNER "\n");
 	tty_set_color(TTY_COL_DIM);
 	tty_printf("build %u.%u.%u\n", AUDIOS_VERSION_MAJOR, AUDIOS_VERSION_MINOR, AUDIOS_VERSION_PATCH);
+	tty_printf("board %s\n", AUDIOS_BOARD);
 	tty_printf("uptime %llu.%03llu s\n",
 		(unsigned long long)secs, (unsigned long long)millis);
 	tty_set_color(TTY_COL_FG);

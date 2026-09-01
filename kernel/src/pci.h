@@ -38,7 +38,13 @@ void pci_write32(uint8_t bus, uint8_t slot, uint8_t func, uint8_t offset, uint32
 /** Enable I/O space and bus mastering on a function. */
 void pci_enable_io_bm(const struct pci_device *dev);
 
+/** Enable memory space and bus mastering (HDA MMIO). */
+void pci_enable_mem_bm(const struct pci_device *dev);
+
 /** I/O port address stored in a BAR (low bit 1). */
 uint16_t pci_io_bar(uint32_t bar);
+
+/** Physical MMIO address of BAR `index` (0 if the BAR is I/O). */
+uint64_t pci_mmio_bar(const struct pci_device *dev, unsigned index);
 
 #endif

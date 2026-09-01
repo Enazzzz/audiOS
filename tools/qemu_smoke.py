@@ -1,4 +1,4 @@
-"""Drive audiOS 0.0.2 audio commands over QEMU serial and check the capture."""
+"""Drive audiOS 0.0.3 HDA commands over QEMU serial and check the capture."""
 
 from __future__ import annotations
 
@@ -91,7 +91,7 @@ def main() -> int:
         "-audiodev",
         f"wav,id=snd0,path={capture}",
         "-device",
-        "AC97,audiodev=snd0",
+        "hda-output,audiodev=snd0",
     ]
     master, slave = pty.openpty()
     attrs = termios.tcgetattr(master)
@@ -107,7 +107,7 @@ def main() -> int:
     os.close(slave)
     try:
         text = wait_for(master, proc, PROMPT, 30.0)
-        if "audiOS 0.0.2" not in text:
+        if "audiOS 0.0.3" not in text:
             raise RuntimeError(f"banner missing\n{text}")
 
         send(master, "help")
@@ -125,8 +125,8 @@ def main() -> int:
 
         send(master, "audio devices")
         text = wait_for(master, proc, PROMPT, 5.0)
-        if "AC97" not in text:
-            raise RuntimeError(f"did not detect AC97\n{text}")
+        if "HDA" not in text:
+            raise RuntimeError(f"did not detect HDA\n{text}")
 
         send(master, "audio info")
         text = wait_for(master, proc, PROMPT, 5.0)
@@ -179,7 +179,7 @@ def main() -> int:
 
         send(master, "version")
         text = wait_for(master, proc, PROMPT, 5.0)
-        if "0.0.2" not in text:
+        if "0.0.3" not in text:
             raise RuntimeError(f"still alive after audio errors?\n{text}")
 
         send(master, "reboot")
@@ -196,15 +196,15 @@ def main() -> int:
     analyze = Path(__file__).with_name("analyze_tone.py")
     if not capture.is_file() or capture.stat().st_size < 1024:
         print(f"warning: capture {capture} missing or tiny; skipping tone FFT", file=sys.stderr)
-        print("audiOS 0.0.2 smoke test passed (commands only)")
+        print("audiOS 0.0.3 smoke test passed (commands only)")
         return 0
 
     rc = subprocess.call([sys.executable, str(analyze), str(capture), "440"])
     if rc != 0:
         print("command checks passed but captured audio was not a 440 Hz tone", file=sys.stderr)
         return 1
-    print("audiOS 0.0.2 smoke test passed")
-    print("checked: audio, devices, set, tone, play, stop, errors, 440 Hz capture")
+    print("audiOS 0.0.3 smoke test passed")
+    print("checked: HDA, devices, set, tone, play, stop, errors, 440 Hz capture")
     return 0
 
 

@@ -9,15 +9,15 @@ static uint32_t pool_phys;
 static size_t pool_size;
 static size_t pool_used;
 
-/** Round `n` up to 64 bytes for cache-line / BDL alignment. */
-static size_t align64(size_t n)
+/** Round `n` up to 128 bytes (HDA BDL / CORB alignment). */
+static size_t align128(size_t n)
 {
-	return (n + 63u) & ~(size_t)63u;
+	return (n + 127u) & ~(size_t)127u;
 }
 
 /**
  * Pick the first usable region below 4 GiB that can hold a 2 MiB DMA pool.
- * AC97 descriptors must live in 32-bit physical space.
+ * AC97 / HDA descriptors must live in 32-bit physical space.
  */
 void phys_init(uint64_t hhdm_offset, struct limine_memmap_response *map)
 {
@@ -35,7 +35,7 @@ void phys_init(uint64_t hhdm_offset, struct limine_memmap_response *map)
 		if (e->type != LIMINE_MEMMAP_USABLE) {
 			continue;
 		}
-		uint64_t base = (e->base + 63ull) & ~63ull;
+		uint64_t base = (e->base + 127ull) & ~127ull;
 		uint64_t end = e->base + e->length;
 		if (base >= end) {
 			continue;
@@ -73,7 +73,7 @@ void *phys_to_virt(uint64_t phys)
 /** Allocate zeroed DMA memory below 4 GiB. */
 void *phys_alloc(size_t bytes, uint32_t *phys_out)
 {
-	bytes = align64(bytes);
+	bytes = align128(bytes);
 	if (pool_virt == NULL || pool_used + bytes > pool_size) {
 		if (phys_out) {
 			*phys_out = 0;
