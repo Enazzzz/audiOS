@@ -58,16 +58,18 @@ run: $(IMAGE_NAME).iso audios-fs.img
 test: $(IMAGE_NAME).iso $(IMAGE_NAME).img audios-fs.img
 	python3 tools/test_fat_lfn.py
 	python3 tools/qemu_smoke.py $(IMAGE_NAME).iso
+	python3 tools/qemu_full.py $(IMAGE_NAME).iso
 	python3 tools/qemu_img_boot.py $(IMAGE_NAME).img
 	python3 tools/qemu_ps2.py $(IMAGE_NAME).img
 
-audios-fs.img: tools/make_fat.py media/test.wav media/bad.wav media/float.wav
+audios-fs.img: tools/make_fat.py media/test.wav media/bad.wav media/float.wav tools/demo.aos
 	python3 tools/make_fat.py audios-fs.img --size-mb 16 --dir audio \
 		--file media/test.wav:audio/test.wav \
 		--file media/bad.wav:audio/bad.wav \
-		--file media/float.wav:audio/float.wav
+		--file media/float.wav:audio/float.wav \
+		--file tools/demo.aos:demo.aos
 
-$(IMAGE_NAME).img: limine-binary/limine kernel media/test.wav
+$(IMAGE_NAME).img: limine-binary/limine kernel media/test.wav tools/demo.aos
 	python3 tools/make_fat.py $(IMAGE_NAME).img --size-mb 64 --dir boot --dir audio --dir boot/limine \
 		--file kernel/bin-$(ARCH)/kernel:boot/kernel \
 		--file limine.conf:boot/limine/limine.conf \
@@ -75,7 +77,8 @@ $(IMAGE_NAME).img: limine-binary/limine kernel media/test.wav
 		--file limine-binary/limine-bios.sys:limine-bios.sys \
 		--file media/test.wav:audio/test.wav \
 		--file media/bad.wav:audio/bad.wav \
-		--file media/float.wav:audio/float.wav
+		--file media/float.wav:audio/float.wav \
+		--file tools/demo.aos:demo.aos
 	./limine-binary/limine bios-install $(IMAGE_NAME).img
 
 media/test.wav: tools/gen_wav.py

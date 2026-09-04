@@ -6,3 +6,4 @@
 .cursor
 /media/
 /audios-out.wav
+tools/__pycache__/
