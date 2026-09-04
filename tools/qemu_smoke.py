@@ -59,8 +59,13 @@ def wait_for(master: int, proc: subprocess.Popen[bytes], needle: str, timeout: f
 
 
 def send(master: int, line: str) -> None:
-    """Type a command followed by CR."""
-    os.write(master, (line + "\r").encode("ascii"))
+	"""Type a command followed by CR."""
+	os.write(master, (line + "\r").encode("ascii"))
+
+
+def send_raw(master: int, data: bytes) -> None:
+	"""Write bytes with no trailing CR (game keys, editor, CSI)."""
+	os.write(master, data)
 
 
 def drain(master: int, seconds: float) -> None:
