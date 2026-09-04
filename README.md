@@ -1,11 +1,11 @@
 # audiOS
 
 audiOS is a lightweight, command-line-first operating system for digital
-audio. **v0.1.4** is built around one machine: the **ASRock 960GM-GS3 FX**
+audio. **v0.1.5** is built around one machine: the **ASRock 960GM-GS3 FX**
 (AMD FX, 760G/SB710, Realtek ALC662).
 
 ```
-audiOS 0.1.4
+audiOS 0.1.5
 96 kHz • 24-bit • 2 channels
 audiOS>
 ```
@@ -16,7 +16,7 @@ bumps **minor**. A huge turning point becomes **1.0.0** (v1.00). The old
 `0.0.2`–`0.0.6` trail and the first-kernel `0.1` tag are history; this
 line started as a naming reset at `0.1.0`, not a rollback.
 
-## What 0.1.4 does
+## What 0.1.5 does
 
 - Boots on that AM3+ board (legacy BIOS, VGA or GTX 1050). **PS/2 keyboard
   only.** `.img` boot takes EHCI for the stick, which kills BIOS USB-legacy,
@@ -24,6 +24,8 @@ line started as a naming reset at `0.1.0`, not a rollback.
   real PS/2 keyboard into the PS/2 port.
 - Plays through the onboard HD Audio jack (SB710 + ALC662)
 - Persistent **FAT32** on the boot USB (EHCI mass storage). Never formats.
+  The 64 MiB `audios.img` download grows onto the rest of the stick (up to
+  ~1 GiB) on first mount so `mkdir` is not stuck at ~65 MB.
 - Named **clips** in RAM: load/save WAV, slice, join, mix, reverse, gain,
   filters, delay, pitch/stretch (integer resample), a non-grid sequencer
 - `play clip` or `play file.wav` (`loop` until `stop`)
@@ -73,7 +75,10 @@ Up / Down: previous / next command.
 `audios.img` and `audios.iso` are **not** in the git tree. They are 64 MiB
 generated disks (like a compiler’s `.o` files) and would bloat history
 every time the kernel changed. CI builds them and attaches them to a
-GitHub Release:
+GitHub Release. The 64 MiB file is only the download; on first mount the
+kernel extends the FAT32 partition into the rest of the USB **up to about
+1 GiB** without formatting. A 0.0.6 stick cannot grow — that image’s FAT
+tables only cover 64 MiB — so flash this `audios.img` again.
 
 **https://github.com/Enazzzz/audiOS/releases/latest** — last green `main` build
 

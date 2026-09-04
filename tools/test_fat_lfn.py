@@ -57,7 +57,9 @@ def main() -> int:
 		fat.write(img_path)
 		fat2 = FatImage.__new__(FatImage)
 		fat2.data = bytearray(img_path.read_bytes())
+		fat2.total_bytes = len(fat2.data)
 		fat2.part_sectors = (len(fat2.data) // 512) - PART_START
+		fat2.grow_mb = 48
 		fat2._init_geometry()
 		root = _dir_names(fat2, ROOT_CLUS)
 		if "limine-bios.sys" not in root:
@@ -95,6 +97,12 @@ def main() -> int:
 		if boot.clusters < 65525:
 			print(
 				f"boot image would be FAT16 to Limine ({boot.clusters} clusters, spc={boot.spc})",
+				file=sys.stderr,
+			)
+			return 1
+		if boot.fat_sz * 512 // 4 < 1_800_000:
+			print(
+				f"FAT too small to grow onto a ~1 GiB stick (fat_sz={boot.fat_sz})",
 				file=sys.stderr,
 			)
 			return 1

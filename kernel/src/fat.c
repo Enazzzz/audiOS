@@ -1,6 +1,7 @@
 #include "fat.h"
 #include "klib.h"
 #include "phys.h"
+#include "tty.h"
 
 #include <stddef.h>
 
@@ -24,6 +25,8 @@ static uint32_t root_clus;
 static uint32_t spc;
 static uint32_t cluster_bytes;
 static uint32_t total_clusters;
+static uint32_t reserved_secs;
+static uint32_t backup_boot;
 static uint32_t fat_cache_sec = 0xFFFFFFFFu;
 static uint8_t fat_cache[SECTOR];
 static int fat_cache_dirty;
@@ -974,6 +977,80 @@ uint64_t fat_bytes_free(void)
 	return free_c * cluster_bytes;
 }
 
+/**
+ * If the USB is bigger than the 64 MiB image, extend the MBR partition and
+ * BPB to the extra space the existing FAT tables can already describe.
+ * Does not format, move files, or grow the FAT itself (0.0.6 images stay small).
+ */
+static void fat_try_grow(uint32_t totsec)
+{
+	if (bd == NULL || bd->sectors < 4u || part_lba >= bd->sectors) {
+		return;
+	}
+	uint64_t room = bd->sectors - part_lba;
+	uint32_t entries = (fat_sz * SECTOR) / 4u;
+	if (entries < 4u) {
+		return;
+	}
+	uint32_t max_clus = entries - 2u;
+	uint64_t max_vol = (uint64_t)data_begin + (uint64_t)max_clus * (uint64_t)spc;
+	uint64_t want = room;
+	if (want > max_vol) {
+		want = max_vol;
+	}
+	if (want > 0xFFFFFFFFull) {
+		want = 0xFFFFFFFFull;
+	}
+	uint32_t neu = (uint32_t)want;
+	if (neu <= totsec) {
+		if (room > totsec + 2048u) {
+			tty_set_color(TTY_COL_DIM);
+			tty_printf("fs: USB is %llu bytes; this image's FAT only reaches %llu (flash a new audios.img)\n",
+				(unsigned long long)bd->sectors * SECTOR,
+				(unsigned long long)totsec * SECTOR);
+			tty_set_color(TTY_COL_FG);
+		}
+		return;
+	}
+	uint8_t mbr[SECTOR];
+	if (bd->read(0, 1, mbr) == 0 && mbr[0x1C2] != 0xEE) {
+		for (unsigned i = 0; i < 4; i++) {
+			uint8_t *e = mbr + 0x1BE + i * 16;
+			if (r32(e + 8) == part_lba && (e[4] == 0x0B || e[4] == 0x0C || e[4] == 0x0E)) {
+				w32(e + 12, neu);
+				e[5] = 0xFE;
+				e[6] = 0xFF;
+				e[7] = 0xFF;
+				(void)bd->write(0, 1, mbr);
+				break;
+			}
+		}
+	}
+	uint8_t bpb[SECTOR];
+	if (rd(0, 1, bpb) != 0) {
+		return;
+	}
+	w32(bpb + 32, neu);
+	if (wr(0, 1, bpb) != 0) {
+		return;
+	}
+	if (backup_boot != 0 && backup_boot < reserved_secs) {
+		(void)wr(backup_boot, 1, bpb);
+	}
+	uint8_t fsi[SECTOR];
+	if (rd(1, 1, fsi) == 0) {
+		w32(fsi + 488, 0xFFFFFFFFu);
+		w32(fsi + 492, 0xFFFFFFFFu);
+		(void)wr(1, 1, fsi);
+	}
+	total_clusters = (neu - data_begin) / spc;
+	tty_set_color(TTY_COL_AUDIO);
+	tty_printf("fs: grew FAT32 to %llu bytes of USB (%llu byte stick)\n",
+		(unsigned long long)total_clusters * cluster_bytes,
+		(unsigned long long)bd->sectors * SECTOR);
+	tty_set_color(TTY_COL_FG);
+}
+
 /** Identify a FAT32 partition start LBA on the block device. */
 static int find_part(void)
 {
@@ -1071,19 +1148,20 @@ bool fat_mount(struct blkdev *dev)
 		return false;
 	}
 	cluster_bytes = spc * SECTOR;
-	uint32_t reserved = r16(bpb + 14);
+	reserved_secs = r16(bpb + 14);
 	uint32_t fats = bpb[16];
 	fat_sz = r32(bpb + 36);
 	root_clus = r32(bpb + 44);
-	if (fat_sz == 0 || fats != 2 || reserved == 0 || root_clus < 2) {
+	backup_boot = r16(bpb + 50);
+	if (fat_sz == 0 || fats != 2 || reserved_secs == 0 || root_clus < 2) {
 		fat_fail("not FAT32 (refusing to format)");
 		return false;
 	}
 	if (memcmp(bpb + 82, "FAT32   ", 8) != 0 && memcmp(bpb + 82, "FAT32", 5) != 0) {
 		/* Some volumes leave this blank; still require FAT32 BPB fields. */
 	}
-	fat_begin = reserved;
-	data_begin = reserved + fats * fat_sz;
+	fat_begin = reserved_secs;
+	data_begin = reserved_secs + fats * fat_sz;
 	uint32_t totsec = r32(bpb + 32);
 	if (totsec == 0) {
 		totsec = r16(bpb + 19);
@@ -1101,6 +1179,7 @@ bool fat_mount(struct blkdev *dev)
 		fat_fail("out of memory");
 		return false;
 	}
+	fat_try_grow(totsec);
 	mounted = 1;
 	return true;
 }

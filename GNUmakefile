@@ -64,11 +64,12 @@ test: $(IMAGE_NAME).iso $(IMAGE_NAME).img audios-fs.img
 	python3 tools/qemu_ps2.py $(IMAGE_NAME).img
 
 audios-fs.img: tools/make_fat.py media/test.wav media/bad.wav media/float.wav tools/demo.aos
-	python3 tools/make_fat.py audios-fs.img --size-mb 16 --dir audio \
+	python3 tools/make_fat.py audios-fs.img --size-mb 16 --grow-mb 48 --dir audio \
 		--file media/test.wav:audio/test.wav \
 		--file media/bad.wav:audio/bad.wav \
 		--file media/float.wav:audio/float.wav \
 		--file tools/demo.aos:demo.aos
+	python3 -c "import os; os.truncate('audios-fs.img', 48 * 1024 * 1024)"
 
 $(IMAGE_NAME).img: limine-binary/limine kernel media/test.wav tools/demo.aos
 	python3 tools/make_fat.py $(IMAGE_NAME).img --size-mb 64 --dir boot --dir audio --dir boot/limine \
