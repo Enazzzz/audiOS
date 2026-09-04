@@ -31,7 +31,30 @@ jobs:
             SHA256SUMS
           if-no-files-found: error
           retention-days: 90
-      - name: Publish GitHub Release (main)
+      # Every branch push gets its own downloadable release (agent work included).
+      - name: Publish GitHub Release (this build)
+        if: github.event_name == 'push'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: build-${{ github.run_number }}
+          name: audios.img ${{ github.ref_name }} (${{ github.sha }})
+          target_commitish: ${{ github.sha }}
+          make_latest: false
+          body: |
+            Prebuilt disks from `${{ github.sha }}` on `${{ github.ref_name }}`.
+
+            Flash **`audios.img`** (or decompress `audios.img.gz` first) as a raw USB image on the ASRock 960GM-GS3 FX. Do not flash `audios.iso` on that board.
+
+            USB keyboard (rear USB 2.0) or PS/2. Etcher raw / Rufus DD / `dd`.
+          files: |
+            audios.img
+            audios.img.gz
+            audios.iso
+            SHA256SUMS
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      # Rolling pointer: always the last green `main` build.
+      - name: Publish GitHub Release (latest / main)
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         uses: softprops/action-gh-release@v2
         with:
@@ -39,12 +62,13 @@ jobs:
           name: audiOS images
           target_commitish: ${{ github.sha }}
           make_latest: true
+          overwrite_files: true
           body: |
-            Prebuilt disks from `${{ github.sha }}`.
+            Prebuilt disks from `${{ github.sha }}` (main).
 
             Flash **`audios.img`** (or decompress `audios.img.gz` first) as a raw USB image on the ASRock 960GM-GS3 FX. Do not flash `audios.iso` on that board.
 
-            PS/2 keyboard. Rear USB 2.0. Etcher raw / Rufus DD / `dd`.
+            USB keyboard (rear USB 2.0) or PS/2. Etcher raw / Rufus DD / `dd`.
           files: |
             audios.img
             audios.img.gz
