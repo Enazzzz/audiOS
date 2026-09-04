@@ -60,6 +60,7 @@ test: $(IMAGE_NAME).iso $(IMAGE_NAME).img audios-fs.img
 	python3 tools/qemu_smoke.py $(IMAGE_NAME).iso
 	python3 tools/qemu_img_boot.py $(IMAGE_NAME).img
 	python3 tools/qemu_ps2.py $(IMAGE_NAME).img
+	python3 tools/qemu_usb_kbd.py $(IMAGE_NAME).img
 
 audios-fs.img: tools/make_fat.py media/test.wav media/bad.wav media/float.wav
 	python3 tools/make_fat.py audios-fs.img --size-mb 16 --dir audio \

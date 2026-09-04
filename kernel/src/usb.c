@@ -32,6 +32,7 @@
 #define PORT_PED	0x00000004u
 #define PORT_PR		0x00000100u
 #define PORT_PP		0x00001000u
+#define PORT_OWNER	0x00002000u
 
 #define QTD_ACT		0x80u
 #define QTD_HALT	0x40u
@@ -528,6 +529,8 @@ static int port_probe(unsigned i, uint8_t *next_addr)
 	usb_wait_ms(10);
 	sc = opr(PORTSC + i * 4);
 	if ((sc & PORT_PED) == 0) {
+		/* Full/low-speed device: give the port to the OHCI companion. */
+		opw(PORTSC + i * 4, sc | PORT_OWNER);
 		return 0;
 	}
 	uint8_t addr = *next_addr;
@@ -581,6 +584,7 @@ bool usb_msc_init(struct blkdev *out, void (*idle)(void))
 			continue;
 		}
 		uint8_t addr = 1;
+		int found = 0;
 		for (unsigned i = 0; i < nports; i++) {
 			if (port_probe(i, &addr)) {
 				out->read = msc_read_lba;
@@ -588,13 +592,19 @@ bool usb_msc_init(struct blkdev *out, void (*idle)(void))
 				out->sectors = msc_sectors;
 				ksnprintf(out->name, sizeof(out->name), "%s", msc_name);
 				tty_printf("usb: %s\n", msc_name);
-				return true;
+				found = 1;
+				break;
 			}
 		}
-		opw(USBCMD, 0);
+		usb_ohci_init(idle);
+		if (found) {
+			return true;
+		}
+		/* Leave EHCI running so parked companion ports stay routed. */
 	}
 	if (!any) {
 		tty_puts("usb: no EHCI controller\n");
+		usb_ohci_init(idle);
 	} else {
 		tty_puts("usb: no high-speed mass storage\n");
 	}

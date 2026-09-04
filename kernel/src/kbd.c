@@ -70,7 +70,7 @@ static const char map_shifted[128] = {
 };
 
 /** Push one key (ASCII or KBD_UP / KBD_DOWN). Drops input if full. */
-static void kbd_push(int c)
+void kbd_inject(int c)
 {
 	unsigned next = (qhead + 1) % KBD_BUF_SIZE;
 	if (next == qtail) {
@@ -78,6 +78,12 @@ static void kbd_push(int c)
 	}
 	queue[qhead] = c;
 	qhead = next;
+}
+
+/** Queue helper used by the PS/2 translator. */
+static void kbd_push(int c)
+{
+	kbd_inject(c);
 }
 
 /** True when the 8042 looks absent (floating bus). */

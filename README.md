@@ -12,9 +12,11 @@ audiOS>
 
 ## What 0.0.6 does
 
-- Boots on that AM3+ board (legacy BIOS, VGA or GTX 1050, **PS/2** keyboard).
-  USB keyboards are not supported. After a USB `.img` boot the kernel
-  re-enables the 8042; use the PS/2 ports, not a USB HID stick.
+- Boots on that AM3+ board (legacy BIOS, VGA or GTX 1050). **PS/2 and USB
+  keyboards** on the rear USB 2.0 ports. `.img` boot takes EHCI for the
+  stick, which kills BIOS USB-legacy; the kernel then parks full-speed
+  devices onto the SB710 OHCI companions and speaks HID boot protocol.
+  A PS/2-to-USB dongle is still a USB keyboard — that is expected.
 - Plays through the onboard HD Audio jack (SB710 + ALC662)
 - Persistent **FAT32** on the boot USB (EHCI mass storage). Never formats.
 - Named **clips** in RAM: load/save WAV, slice, join, mix, reverse, gain,
