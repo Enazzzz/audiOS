@@ -70,10 +70,11 @@ generated disks (like a compiler’s `.o` files) and would bloat history
 every time the kernel changed. CI builds them and attaches them to a
 GitHub Release:
 
-**https://github.com/Enazzzz/audiOS/releases/latest**
+**https://github.com/Enazzzz/audiOS/releases/latest** — last green `main` build
 
-Download `audios.img` (or `audios.img.gz`). Each Actions run also keeps
-the same files under the workflow’s **Artifacts** for 90 days.
+Every push also creates a numbered release (`build-N`) with the same
+files, so a branch image is downloadable before it is merged. CI
+artifacts stay on the Actions run for 90 days as well.
 
 ## Build and boot on the FX box
 
