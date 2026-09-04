@@ -529,7 +529,8 @@ static int port_probe(unsigned i, uint8_t *next_addr)
 	usb_wait_ms(10);
 	sc = opr(PORTSC + i * 4);
 	if ((sc & PORT_PED) == 0) {
-		/* Full/low-speed device: give the port to the OHCI companion. */
+		/* Full/low-speed (a USB keyboard, etc.): park it so EHCI
+		 * does not stall. Keyboard input is PS/2, not USB HID. */
 		opw(PORTSC + i * 4, sc | PORT_OWNER);
 		return 0;
 	}
@@ -596,15 +597,12 @@ bool usb_msc_init(struct blkdev *out, void (*idle)(void))
 				break;
 			}
 		}
-		usb_ohci_init(idle);
 		if (found) {
 			return true;
 		}
-		/* Leave EHCI running so parked companion ports stay routed. */
 	}
 	if (!any) {
 		tty_puts("usb: no EHCI controller\n");
-		usb_ohci_init(idle);
 	} else {
 		tty_puts("usb: no high-speed mass storage\n");
 	}

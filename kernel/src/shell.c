@@ -10,7 +10,6 @@
 #include "reboot.h"
 #include "serial.h"
 #include "tty.h"
-#include "usb.h"
 #include "version.h"
 
 #define LINE_MAX	256
@@ -416,7 +415,6 @@ void shell_run(void)
 	shell_prompt();
 	for (;;) {
 		int c;
-		usb_poll();
 		while ((c = kbd_getc()) >= 0) {
 			shell_feed(c);
 			audio_service();

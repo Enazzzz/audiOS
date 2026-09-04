@@ -1,11 +1,11 @@
 # audiOS
 
 audiOS is a lightweight, command-line-first operating system for digital
-audio. **v0.1.0** is built around one machine: the **ASRock 960GM-GS3 FX**
+audio. **v0.1.1** is built around one machine: the **ASRock 960GM-GS3 FX**
 (AMD FX, 760G/SB710, Realtek ALC662).
 
 ```
-audiOS 0.1.0
+audiOS 0.1.1
 96 kHz • 24-bit • 2 channels
 audiOS>
 ```
@@ -14,15 +14,14 @@ Versions are `MAJOR.MINOR.PATCH` in `kernel/src/version.h`. Every small
 change bumps **patch** (`0.1.0` → `0.1.1` → …). A distinct capability jump
 bumps **minor**. A huge turning point becomes **1.0.0** (v1.00). The old
 `0.0.2`–`0.0.6` trail and the first-kernel `0.1` tag are history; this
-`0.1.0` is a naming reset of the current snapshot, not a rollback.
+line started as a naming reset at `0.1.0`, not a rollback.
 
-## What 0.1.0 does
+## What 0.1.1 does
 
-- Boots on that AM3+ board (legacy BIOS, VGA or GTX 1050). **PS/2 and USB
-  keyboards** on the rear USB 2.0 ports. `.img` boot takes EHCI for the
-  stick, which kills BIOS USB-legacy; the kernel then parks full-speed
-  devices onto the SB710 OHCI companions and speaks HID boot protocol.
-  A PS/2-to-USB dongle is still a USB keyboard — that is expected.
+- Boots on that AM3+ board (legacy BIOS, VGA or GTX 1050). **PS/2 keyboard
+  only.** `.img` boot takes EHCI for the stick, which kills BIOS USB-legacy,
+  so a USB keyboard (including a PS/2-to-USB dongle) will not type. Plug a
+  real PS/2 keyboard into the PS/2 port.
 - Plays through the onboard HD Audio jack (SB710 + ALC662)
 - Persistent **FAT32** on the boot USB (EHCI mass storage). Never formats.
 - Named **clips** in RAM: load/save WAV, slice, join, mix, reverse, gain,
