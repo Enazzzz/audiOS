@@ -106,7 +106,7 @@ static void cmd_help(void)
 	tty_puts("  stop              halt playback\n");
 	tty_puts("  music             clip / DSP / seq / rec commands\n");
 	tty_puts("  script <file>     run commands from a text file\n");
-	tty_puts("  ls [path]         list directory\n");
+	tty_puts("  ls [path]         list directory (/os is the system volume)\n");
 	tty_puts("  cd [path]         change directory\n");
 	tty_puts("  pwd               print working directory\n");
 	tty_puts("  mkdir <dir>       create directory\n");

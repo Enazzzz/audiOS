@@ -16,6 +16,12 @@ enum fat_kind {
 	FAT_DIR
 };
 
+/** Boot/system volume vs leftover user-data volume. */
+enum fat_vol_id {
+	FAT_VOL_SYS = 0,
+	FAT_VOL_USR = 1
+};
+
 struct fat_info {
 	enum fat_kind kind;
 	uint32_t size;
@@ -28,13 +34,27 @@ struct fat_iter {
 	uint32_t index;
 };
 
-/** Mount a FAT32 partition on `dev`. Does not create or repair a volume. */
+/** Pump audio while long USB FAT writes run. */
+void fat_set_idle(void (*idle)(void));
+
+/**
+ * Mount the first FAT32 partition as the system volume. If the disk is MBR
+ * with unused slots and leftover sectors, create a second FAT32 partition
+ * there (or mount it if it already exists). Does not reformat partition 1.
+ */
 bool fat_mount(struct blkdev *dev);
 
 bool fat_mounted(void);
+bool fat_vol_ready(enum fat_vol_id id);
+void fat_select(enum fat_vol_id id);
+enum fat_vol_id fat_current(void);
+
 const char *fat_volume(void);
+const char *fat_vol_name(enum fat_vol_id id);
 uint64_t fat_bytes_total(void);
 uint64_t fat_bytes_free(void);
+uint64_t fat_vol_bytes_total(enum fat_vol_id id);
+uint64_t fat_vol_bytes_free(enum fat_vol_id id);
 const char *fat_last_error(void);
 
 /** Resolve `path` (absolute, `/`-separated) into `out`. */
