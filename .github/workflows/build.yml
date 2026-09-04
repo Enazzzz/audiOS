@@ -45,7 +45,7 @@ jobs:
 
             Flash **`audios.img`** (or decompress `audios.img.gz` first) as a raw USB image on the ASRock 960GM-GS3 FX. Do not flash `audios.iso` on that board.
 
-            USB keyboard (rear USB 2.0) or PS/2. Etcher raw / Rufus DD / `dd`.
+            PS/2 keyboard. Etcher raw / Rufus DD / `dd`.
           files: |
             audios.img
             audios.img.gz
@@ -68,7 +68,7 @@ jobs:
 
             Flash **`audios.img`** (or decompress `audios.img.gz` first) as a raw USB image on the ASRock 960GM-GS3 FX. Do not flash `audios.iso` on that board.
 
-            USB keyboard (rear USB 2.0) or PS/2. Etcher raw / Rufus DD / `dd`.
+            PS/2 keyboard. Etcher raw / Rufus DD / `dd`.
           files: |
             audios.img
             audios.img.gz

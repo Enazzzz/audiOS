@@ -14,7 +14,4 @@ void kbd_irq(void);
 /** Non-blocking key read. Returns -1 if empty, ASCII, or KBD_UP / KBD_DOWN. */
 int kbd_getc(void);
 
-/** Queue a key from USB HID (same values as `kbd_getc`). */
-void kbd_inject(int c);
-
 #endif
