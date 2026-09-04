@@ -5,7 +5,7 @@
 #define KBD_UP		0x110
 #define KBD_DOWN	0x111
 
-/** Drain the PS/2 data port and enable IRQ1 handling. */
+/** Enable the 8042 keyboard port (clock, IRQ1, set-1 translation) and reset the device. */
 void kbd_init(void);
 
 /** IRQ1 handler: translate scancode set 1 into ASCII and queue it. */

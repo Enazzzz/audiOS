@@ -95,10 +95,14 @@ void kmain(void)
 	pic_init();
 	idt_init();
 	pit_init();
-	kbd_init();
 	audio_init();
 	fs_init(audio_service);
 
+	/*
+	 * EHCI handoff on a USB-booted .img drops BIOS 8042 legacy emulation.
+	 * Re-init PS/2 after that, then unmask IRQs so IRQ1 can fire.
+	 */
+	kbd_init();
 	__asm__ volatile ("sti");
 	shell_run();
 	hcf();
