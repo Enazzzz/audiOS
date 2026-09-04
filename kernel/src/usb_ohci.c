@@ -90,6 +90,7 @@ static uint32_t tds_phys;
 static uint8_t *obuf;
 static uint32_t obuf_phys;
 static void (*idle_fn)(void);
+static uint32_t td_timeout_ms = 400;
 
 static int hid_ready;
 static uint8_t hid_addr;
@@ -138,7 +139,8 @@ static uint32_t ed_phys(unsigned i)
 /** Wait until a TD leaves the "not accessed" condition code. */
 static int td_wait(struct ohci_td *td, uint32_t ms)
 {
-	uint64_t deadline = pit_ticks() + ms;
+	(void)ms;
+	uint64_t deadline = pit_ticks() + td_timeout_ms;
 	while (pit_ticks() < deadline) {
 		uint32_t cc = td->flags >> TD_CC_SHIFT;
 		if (cc != 0xF) {
@@ -218,7 +220,13 @@ static int ohci_ctrl(uint8_t addr, uint8_t type, uint8_t req, uint16_t value,
 	rw(HC_CONTROLHEADED, ed_phys(0));
 	rw(HC_CONTROLCURRENTED, 0);
 	rw(HC_CMDSTATUS, rr(HC_CMDSTATUS) | CMD_CLF);
-	rw(HC_CONTROL, (rr(HC_CONTROL) & ~(CTRL_IR | (3u << 6))) | CTRL_CLE | CTRL_USBOPER);
+	uint32_t c = rr(HC_CONTROL);
+	c &= ~(CTRL_IR | (3u << 6));
+	c |= CTRL_CLE | CTRL_USBOPER;
+	if (hid_use_int) {
+		c |= CTRL_PLE;
+	}
+	rw(HC_CONTROL, c);
 	ohci_sync();
 
 	int rc = 0;
@@ -373,7 +381,10 @@ static void hid_arm_int(void)
 	eds[1].tail = td_phys(5);
 	eds[1].head = td_phys(4);
 	eds[1].next = 0;
-	ohci_sync();
+	__asm__ volatile (
+		"clflush %0\n\tclflush %1\n\tclflush %2\n\tmfence"
+		: "+m"(eds[1].flags), "+m"(tds[4].flags), "+m"(hcca->inttable[0])
+		:: "memory");
 }
 
 /** SET_ADDRESS / SET_CONFIG / boot protocol on one addressed device. */
@@ -548,10 +559,16 @@ void usb_ohci_init(void (*idle)(void))
 	idle_fn = idle;
 	hid_ready = 0;
 	if (hcca == NULL) {
-		hcca = phys_alloc(sizeof(*hcca), &hcca_phys);
+		uint32_t raw_phys = 0;
+		uint8_t *raw = phys_alloc(512, &raw_phys);
 		eds = phys_alloc(sizeof(struct ohci_ed) * 4, &eds_phys);
 		tds = phys_alloc(sizeof(struct ohci_td) * 8, &tds_phys);
 		obuf = phys_alloc(256, &obuf_phys);
+		if (raw != NULL) {
+			uint32_t adj = (256u - (raw_phys & 255u)) & 255u;
+			hcca = (struct ohci_hcca *)(raw + adj);
+			hcca_phys = raw_phys + adj;
+		}
 	}
 	if (hcca == NULL || eds == NULL || tds == NULL || obuf == NULL) {
 		return;
@@ -567,31 +584,22 @@ void usb_ohci_init(void (*idle)(void))
 	}
 }
 
-/** Poll interrupt IN, or GET_REPORT if the device has no INT endpoint. */
+/** Poll the interrupt IN TD. */
 void usb_ohci_poll(void)
 {
-	if (!hid_ready) {
+	if (!hid_ready || !hid_use_int) {
 		return;
 	}
-	if (hid_use_int) {
-		uint32_t cc = tds[4].flags >> TD_CC_SHIFT;
-		if (cc == 0xF) {
-			return;
-		}
-		if (cc == 0) {
-			uint8_t now[8];
-			memcpy(now, obuf + 128, 8);
-			hid_diff(now);
-		}
-		hid_arm_int();
+	uint32_t cc = tds[4].flags >> TD_CC_SHIFT;
+	if (cc == 0xF) {
 		return;
 	}
-	uint8_t now[8];
-	memset(now, 0, 8);
-	if (ohci_ctrl(hid_addr, 0xA1, 0x01, 0x0100, hid_iface, now, 8, hid_ls) != 0) {
-		return;
+	if (cc == 0) {
+		uint8_t now[8];
+		memcpy(now, obuf + 128, 8);
+		hid_diff(now);
 	}
-	hid_diff(now);
+	hid_arm_int();
 }
 
 void usb_poll(void)

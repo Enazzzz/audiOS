@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import pty
 import select
@@ -39,25 +40,52 @@ def wait_needle(master: int, proc: subprocess.Popen[bytes], needle: str, deadlin
 	raise TimeoutError(f"timed out waiting for {needle!r}\n{strip_ansi(bytes(buf))[-2500:]}")
 
 
-def monitor_sendkeys(sock_path: Path, keys: list[str]) -> None:
-	"""Inject qcodes (goes to the USB kbd when i8042 is off)."""
+def qmp_type(sock_path: Path, keys: list[str]) -> None:
+	"""Send key down/up through QMP so QEMU delivers them to usb-kbd."""
 	deadline = time.time() + 5.0
 	while time.time() < deadline:
 		if sock_path.exists():
 			break
 		time.sleep(0.05)
 	s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-	s.settimeout(5)
+	s.settimeout(8)
 	s.connect(str(sock_path))
-	time.sleep(0.3)
-	try:
-		s.recv(4096)
-	except OSError:
-		pass
+
+	def recv_json() -> dict:
+		buf = b""
+		while b"\n" not in buf:
+			chunk = s.recv(4096)
+			if not chunk:
+				break
+			buf += chunk
+		line = buf.split(b"\n", 1)[0]
+		return json.loads(line.decode("utf-8", errors="replace") or "{}")
+
+	def send(obj: dict) -> dict:
+		s.sendall((json.dumps(obj) + "\n").encode("ascii"))
+		rep = recv_json()
+		if "error" in rep:
+			print("qmp error", obj, rep, file=sys.stderr)
+		return rep
+
+	recv_json()
+	send({"execute": "qmp_capabilities"})
 	for key in keys:
-		s.sendall(f"sendkey {key}\n".encode("ascii"))
-		time.sleep(0.08)
-	time.sleep(0.3)
+		for down in (True, False):
+			send({
+				"execute": "input-send-event",
+				"arguments": {
+					"events": [{
+						"type": "key",
+						"data": {
+							"down": down,
+							"key": {"type": "qcode", "data": key},
+						},
+					}],
+				},
+			})
+		time.sleep(0.05)
+	time.sleep(0.2)
 	s.close()
 
 
@@ -66,9 +94,9 @@ def main() -> int:
 	if not img.is_file():
 		print(f"missing image: {img}", file=sys.stderr)
 		return 1
-	mon = Path("/tmp/audios-usbhid.sock")
+	qmp = Path("/tmp/audios-usbhid.qmp")
 	try:
-		mon.unlink()
+		qmp.unlink()
 	except FileNotFoundError:
 		pass
 	cmd = [
@@ -92,8 +120,8 @@ def main() -> int:
 		"-no-reboot",
 		"-vga",
 		"std",
-		"-monitor",
-		f"unix:{mon},server,nowait",
+		"-qmp",
+		f"unix:{qmp},server,nowait",
 	]
 	master, slave = pty.openpty()
 	attrs = termios.tcgetattr(master)
@@ -103,11 +131,10 @@ def main() -> int:
 	os.close(slave)
 	buf = bytearray()
 	try:
-		text = wait_needle(master, proc, "audiOS>", time.time() + 40.0, buf)
-		if "HID keyboard" not in text:
-			print(f"OHCI HID not enumerated\n{text[-2000:]}", file=sys.stderr)
-			return 1
-		monitor_sendkeys(mon, ["h", "e", "l", "p", "ret"])
+		wait_needle(master, proc, "HID keyboard", time.time() + 40.0, buf)
+		# Allow the periodic list to run before injecting.
+		time.sleep(0.5)
+		qmp_type(qmp, ["h", "e", "l", "p", "ret"])
 		wait_needle(master, proc, "audiOS commands", time.time() + 12.0, buf)
 		print("audios.img USB HID keyboard accepted help")
 		return 0
@@ -120,7 +147,7 @@ def main() -> int:
 			proc.wait()
 		os.close(master)
 		try:
-			mon.unlink()
+			qmp.unlink()
 		except FileNotFoundError:
 			pass
 

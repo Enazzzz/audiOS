@@ -260,7 +260,13 @@ void kbd_irq(void)
 /** Drain any pending controller bytes into the ASCII queue. */
 void kbd_poll(void)
 {
-	while (inb(KBD_STATUS) & ST_OUT) {
+	if (kbd_absent()) {
+		return;
+	}
+	for (int n = 0; n < 32; n++) {
+		if ((inb(KBD_STATUS) & ST_OUT) == 0) {
+			return;
+		}
 		kbd_handle(inb(KBD_DATA));
 	}
 }
