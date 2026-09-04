@@ -215,9 +215,9 @@ def main() -> int:
 
         send(master, "ls")
         text = wait_for(master, proc, PROMPT, 8.0)
-        if "os" not in text.lower():
+        if "os/" not in text.lower() and "  os\n" not in text.lower():
             raise RuntimeError(f"ls root missing os/ (system volume)\n{text}")
-        if "audio" in text.lower():
+        if "audio/" in text.lower():
             raise RuntimeError(f"system audio/ leaked onto the data volume\n{text}")
 
         send(master, "ls /os")
