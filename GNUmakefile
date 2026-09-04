@@ -59,6 +59,7 @@ test: $(IMAGE_NAME).iso $(IMAGE_NAME).img audios-fs.img
 	python3 tools/test_fat_lfn.py
 	python3 tools/qemu_smoke.py $(IMAGE_NAME).iso
 	python3 tools/qemu_full.py $(IMAGE_NAME).iso
+	python3 tools/qemu_sound.py $(IMAGE_NAME).iso
 	python3 tools/qemu_img_boot.py $(IMAGE_NAME).img
 	python3 tools/qemu_ps2.py $(IMAGE_NAME).img
 
