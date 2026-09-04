@@ -1,11 +1,37 @@
 #include "kbd.h"
 #include "io.h"
+#include "pit.h"
 
 #include <stdint.h>
 
 #define KBD_DATA	0x60
 #define KBD_STATUS	0x64
 #define KBD_BUF_SIZE	128
+
+#define ST_OUT		0x01
+#define ST_IN		0x02
+
+/* 8042 controller commands. */
+#define CC_READ_CFG	0x20
+#define CC_WRITE_CFG	0x60
+#define CC_DISABLE_AUX	0xA7
+#define CC_DISABLE_KBD	0xAD
+#define CC_ENABLE_KBD	0xAE
+
+/* Keyboard device commands. */
+#define KD_RESET	0xFF
+#define KD_ENABLE	0xF4
+#define KD_ACK		0xFA
+#define KD_BAT_OK	0xAA
+
+/*
+ * Config byte: IRQ1 on, keyboard clock on, scancode-set-1 translation on.
+ * USB HDD boot plus EHCI handoff often clears these; ISO/CD boot does not.
+ */
+#define CFG_INT1	0x01
+#define CFG_SYS		0x04
+#define CFG_DISABLE_KBD	0x10
+#define CFG_XLAT	0x40
 
 static int queue[KBD_BUF_SIZE];
 static unsigned qhead;
@@ -54,15 +80,132 @@ static void kbd_push(int c)
 	qhead = next;
 }
 
-/** Drain leftover scancodes so IRQ1 starts from a clean controller. */
+/** True when the 8042 looks absent (floating bus). */
+static int kbd_absent(void)
+{
+	uint8_t st = inb(KBD_STATUS);
+	return st == 0xFF;
+}
+
+/** Wait until the 8042 input buffer can take a command/data byte. */
+static int kbd_in_ready(uint32_t ms)
+{
+	uint64_t deadline = pit_ticks() + ms;
+	while (pit_ticks() < deadline) {
+		if ((inb(KBD_STATUS) & ST_IN) == 0) {
+			return 1;
+		}
+		io_wait();
+	}
+	return 0;
+}
+
+/** Wait until the 8042 output buffer has a byte. */
+static int kbd_out_ready(uint32_t ms)
+{
+	uint64_t deadline = pit_ticks() + ms;
+	while (pit_ticks() < deadline) {
+		if (inb(KBD_STATUS) & ST_OUT) {
+			return 1;
+		}
+		io_wait();
+	}
+	return 0;
+}
+
+/** Discard any bytes sitting in the output buffer (not as key events). */
+static void kbd_flush(void)
+{
+	for (int i = 0; i < 64; i++) {
+		if ((inb(KBD_STATUS) & ST_OUT) == 0) {
+			return;
+		}
+		(void)inb(KBD_DATA);
+		io_wait();
+	}
+}
+
+/** Write a controller command to port 0x64. */
+static int kbd_cmd(uint8_t cmd)
+{
+	if (!kbd_in_ready(50)) {
+		return 0;
+	}
+	outb(KBD_STATUS, cmd);
+	return 1;
+}
+
+/** Write a data byte to port 0x60. */
+static int kbd_data(uint8_t v)
+{
+	if (!kbd_in_ready(50)) {
+		return 0;
+	}
+	outb(KBD_DATA, v);
+	return 1;
+}
+
+/** Read one controller/device byte, or -1 on timeout. */
+static int kbd_read(uint32_t ms)
+{
+	if (!kbd_out_ready(ms)) {
+		return -1;
+	}
+	return (int)inb(KBD_DATA);
+}
+
+/**
+ * Reprogram the 8042 and the keyboard after BIOS USB boot / EHCI handoff.
+ * Interrupts are held off so reset ACKs are not treated as scancodes.
+ */
 void kbd_init(void)
 {
+	unsigned long rflags;
+	__asm__ volatile ("pushfq; pop %0; cli" : "=r"(rflags));
+
 	qhead = 0;
 	qtail = 0;
 	shift = 0;
 	extended = 0;
-	while (inb(KBD_STATUS) & 0x01) {
-		(void)inb(KBD_DATA);
+
+	if (kbd_absent()) {
+		goto out;
+	}
+
+	kbd_cmd(CC_DISABLE_KBD);
+	kbd_cmd(CC_DISABLE_AUX);
+	kbd_flush();
+
+	if (!kbd_cmd(CC_READ_CFG)) {
+		goto out;
+	}
+	int cfg = kbd_read(50);
+	if (cfg < 0) {
+		cfg = CFG_INT1 | CFG_SYS | CFG_XLAT;
+	}
+	cfg |= CFG_INT1 | CFG_XLAT | CFG_SYS;
+	cfg &= (int)~CFG_DISABLE_KBD;
+	if (!kbd_cmd(CC_WRITE_CFG) || !kbd_data((uint8_t)cfg)) {
+		goto out;
+	}
+
+	kbd_cmd(CC_ENABLE_KBD);
+	kbd_flush();
+
+	/* Device reset: ACK then BAT. Missing replies still leave the port on. */
+	if (kbd_data(KD_RESET)) {
+		(void)kbd_read(200);
+		(void)kbd_read(500);
+	}
+	kbd_flush();
+	if (kbd_data(KD_ENABLE)) {
+		(void)kbd_read(100);
+	}
+	kbd_flush();
+
+out:
+	if (rflags & 0x200) {
+		__asm__ volatile ("sti");
 	}
 }
 
@@ -103,7 +246,7 @@ static void kbd_handle(uint8_t sc)
 /** IRQ1 path: consume the data port. Harmless if the poll loop already did. */
 void kbd_irq(void)
 {
-	if (inb(KBD_STATUS) & 0x01) {
+	if (inb(KBD_STATUS) & ST_OUT) {
 		kbd_handle(inb(KBD_DATA));
 	}
 }
@@ -111,7 +254,7 @@ void kbd_irq(void)
 /** Drain any pending controller bytes into the ASCII queue. */
 void kbd_poll(void)
 {
-	while (inb(KBD_STATUS) & 0x01) {
+	while (inb(KBD_STATUS) & ST_OUT) {
 		kbd_handle(inb(KBD_DATA));
 	}
 }
