@@ -29,9 +29,62 @@ def _short_name(name: str) -> bytes:
 		stem, ext = upper.rsplit(".", 1)
 	else:
 		stem, ext = upper, ""
-	stem = "".join(c if c.isalnum() or c in "-_" else "_" for c in stem)[:8]
-	ext = "".join(c if c.isalnum() or c in "-_" else "_" for c in ext)[:3]
+	stem = "".join(c if c.isalnum() or c in "-_" else "_" for c in stem)
+	ext = "".join(c if c.isalnum() or c in "-_" else "_" for c in ext)
+	if len(stem) > 8 or len(ext) > 3:
+		# VFAT numeric-tail so we do not pretend limine-bios.sys is LIMINE-B.SYS.
+		stem = (stem[:6] + "~1")[:8]
+		ext = ext[:3]
+	else:
+		stem = stem[:8]
+		ext = ext[:3]
 	return (stem.ljust(8) + ext.ljust(3)).encode("ascii")
+
+
+def _needs_lfn(name: str) -> bool:
+	"""True when the name cannot be stored as a lossless 8.3 entry."""
+	if name in (".", ".."):
+		return False
+	if "." in name:
+		stem, ext = name.rsplit(".", 1)
+	else:
+		stem, ext = name, ""
+	if len(stem) > 8 or len(ext) > 3 or stem == "" or " " in name:
+		return True
+	allowed = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_~"
+	return any(c.upper() not in allowed for c in stem + ext)
+
+
+def _lfn_checksum(short11: bytes) -> int:
+	"""VFAT checksum of the 11-byte 8.3 name."""
+	s = 0
+	for b in short11:
+		s = (((s & 1) << 7) | (s >> 1)) + b
+		s &= 0xFF
+	return s
+
+
+def _lfn_entries(name: str, checksum: int) -> list[bytes]:
+	"""Build VFAT long-name entries (on-disk order: last fragment first)."""
+	units = [ord(c) for c in name] + [0]
+	nslot = (len(units) + 12) // 13
+	out: list[bytes] = []
+	for seq in range(nslot, 0, -1):
+		chunk = units[(seq - 1) * 13 : seq * 13]
+		while len(chunk) < 13:
+			chunk.append(0xFFFF)
+		ent = bytearray(32)
+		ent[0] = seq | (0x40 if seq == nslot else 0)
+		ent[11] = 0x0F
+		ent[13] = checksum
+		for i, ch in enumerate(chunk[:5]):
+			struct.pack_into("<H", ent, 1 + i * 2, ch)
+		for i, ch in enumerate(chunk[5:11]):
+			struct.pack_into("<H", ent, 14 + i * 2, ch)
+		for i, ch in enumerate(chunk[11:13]):
+			struct.pack_into("<H", ent, 28 + i * 2, ch)
+		out.append(bytes(ent))
+	return out
 
 
 class FatImage:
@@ -285,23 +338,57 @@ class FatImage:
 			clus = first
 		self._add_dirent(parent, name, 0x20, clus, len(data))
 
-	def _add_dirent(self, parent: int, name: str, attr: int, clus: int, size: int) -> None:
-		"""Insert a short directory entry into `parent`."""
-		blob = bytearray(self._read_dir_entries(parent))
-		slot = None
-		for i in range(0, len(blob), 32):
-			if blob[i] in (0x00, 0xE5):
-				slot = i
+	def _grow_dir(self, first: int, blob: bytearray) -> bytearray:
+		"""Append a cluster to a directory that ran out of slots."""
+		tail = first
+		seen: set[int] = set()
+		while 2 <= tail < 0x0FFFFFF8:
+			if tail in seen:
 				break
-		if slot is None:
-			raise RuntimeError("directory full")
+			seen.add(tail)
+			nxt = self._get_fat(tail)
+			if nxt >= 0x0FFFFFF8:
+				break
+			tail = nxt
+		newc = self._alloc_clus()
+		self._set_fat(tail, newc)
+		blob.extend(b"\x00" * (SPC * SECTOR))
+		return blob
+
+	def _free_slots(self, blob: bytearray, n: int) -> int:
+		"""Byte offset of `n` consecutive free 32-byte directory slots."""
+		need = n * 32
+		for i in range(0, len(blob) - need + 1, 32):
+			ok = True
+			for k in range(n):
+				if blob[i + k * 32] not in (0x00, 0xE5):
+					ok = False
+					break
+			if ok:
+				return i
+		return -1
+
+	def _add_dirent(self, parent: int, name: str, attr: int, clus: int, size: int) -> None:
+		"""Insert an 8.3 entry, plus a VFAT LFN when the name is not 8.3."""
+		short = _short_name(name)
+		records: list[bytes] = []
+		if _needs_lfn(name):
+			records.extend(_lfn_entries(name, _lfn_checksum(short)))
 		ent = bytearray(32)
-		ent[0:11] = _short_name(name)
+		ent[0:11] = short
 		ent[11] = attr
 		struct.pack_into("<H", ent, 20, (clus >> 16) & 0xFFFF)
 		struct.pack_into("<H", ent, 26, clus & 0xFFFF)
 		struct.pack_into("<I", ent, 28, size)
-		blob[slot : slot + 32] = ent
+		records.append(bytes(ent))
+		blob = bytearray(self._read_dir_entries(parent))
+		slot = self._free_slots(blob, len(records))
+		if slot < 0:
+			blob = self._grow_dir(parent, blob)
+			slot = self._free_slots(blob, len(records))
+		if slot < 0:
+			raise RuntimeError("directory full")
+		blob[slot : slot + 32 * len(records)] = b"".join(records)
 		self._write_dir_entries(parent, blob)
 
 	def write(self, path: Path) -> None:

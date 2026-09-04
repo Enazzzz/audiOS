@@ -68,10 +68,11 @@ make
 make test
 ```
 
-For **persistent files**, flash **`audios.img`** with Rufus in **DD image
-mode** (or `dd`). That image is MBR + FAT32; the kernel mounts it and
-writes stay on the stick across reboot. `audios.iso` still boots but is
-read-only — the kernel will not format it.
+For **persistent files**, flash **`audios.img`** as a raw disk: Balena
+Etcher, Rufus **DD image mode**, or `dd`. That image is MBR + FAT32;
+the kernel mounts it and writes stay on the stick across reboot. Do
+not flash `audios.iso` on this board — AMI legacy BIOS treats USB as
+a hard disk, and Limine then cannot see an ISO9660 stage 3.
 
 On the Asrock: USB in a rear 2.0 port, PS/2 keyboard, VGA monitor,
 **F11** boot menu.
