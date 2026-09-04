@@ -648,7 +648,10 @@ static int dir_add(uint32_t dir_clus, const char *name, uint8_t attr, uint32_t c
 bool fat_read(const char *path, void *buf, uint32_t cap, uint32_t *out_size)
 {
 	struct fat_info inf;
-	if (!fat_stat(path, &inf) || inf.kind != FAT_FILE) {
+	if (!fat_stat(path, &inf)) {
+		return false;
+	}
+	if (inf.kind != FAT_FILE) {
 		fat_fail("not a file");
 		return false;
 	}
@@ -879,7 +882,10 @@ bool fat_rename(const char *src, const char *dst)
 bool fat_copy(const char *src, const char *dst)
 {
 	struct fat_info inf;
-	if (!fat_stat(src, &inf) || inf.kind != FAT_FILE) {
+	if (!fat_stat(src, &inf)) {
+		return false;
+	}
+	if (inf.kind != FAT_FILE) {
 		fat_fail("not a file");
 		return false;
 	}

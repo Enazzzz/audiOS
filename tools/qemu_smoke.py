@@ -232,12 +232,17 @@ def main() -> int:
 
         send(master, "cd /")
         wait_for(master, proc, PROMPT, 5.0)
+        send(master, "pwd")
+        text = wait_for(master, proc, PROMPT, 5.0)
+        if "/audio" in text.lower():
+            raise RuntimeError(f"cd / did not leave audio/\n{text}")
+
         send(master, "mkdir notes")
         text = wait_for(master, proc, PROMPT, 8.0)
         if "created" not in text:
             raise RuntimeError(f"mkdir failed\n{text}")
 
-        send(master, "cp audio/test.wav notes/t.wav")
+        send(master, "cp /audio/test.wav notes/t.wav")
         text = wait_for(master, proc, PROMPT, 15.0)
         if "copied" not in text:
             raise RuntimeError(f"cp failed\n{text}")

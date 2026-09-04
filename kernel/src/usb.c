@@ -350,6 +350,18 @@ static int scsi(uint8_t *cdb, uint8_t cdblen, int in, void *data, uint32_t len)
 	return 0;
 }
 
+/** BOT SCSI with a few retries — QEMU EHCI on GitHub runners drops a packet now and then. */
+static int scsi_retry(uint8_t *cdb, uint8_t cdblen, int in, void *data, uint32_t len)
+{
+	for (int t = 0; t < 4; t++) {
+		if (scsi(cdb, cdblen, in, data, len) == 0) {
+			return 0;
+		}
+		usb_wait_ms(10u << (unsigned)t);
+	}
+	return -1;
+}
+
 static int msc_read_lba(uint64_t lba, uint32_t count, void *buf)
 {
 	uint8_t *dst = buf;
@@ -367,7 +379,7 @@ static int msc_read_lba(uint64_t lba, uint32_t count, void *buf)
 		cdb[5] = (uint8_t)lba;
 		cdb[7] = (uint8_t)(n >> 8);
 		cdb[8] = (uint8_t)n;
-		if (scsi(cdb, 10, 1, dst, n * 512u) != 0) {
+		if (scsi_retry(cdb, 10, 1, dst, n * 512u) != 0) {
 			return -1;
 		}
 		dst += n * 512u;
@@ -394,7 +406,7 @@ static int msc_write_lba(uint64_t lba, uint32_t count, const void *buf)
 		cdb[5] = (uint8_t)lba;
 		cdb[7] = (uint8_t)(n >> 8);
 		cdb[8] = (uint8_t)n;
-		if (scsi(cdb, 10, 0, (void *)src, n * 512u) != 0) {
+		if (scsi_retry(cdb, 10, 0, (void *)src, n * 512u) != 0) {
 			return -1;
 		}
 		src += n * 512u;
