@@ -272,6 +272,9 @@ def main() -> int:
         text = wait_for(master, proc, PROMPT, 15.0)
         if "FAT32" not in text or "free" not in text:
             raise RuntimeError(f"storage failed\n{text}")
+        tot = re.search(r"total:\s+(\d+)", text)
+        if tot is None or int(tot.group(1)) < 30_000_000:
+            raise RuntimeError(f"FAT did not grow onto the padded USB\n{text}")
 
         send(master, "rm notes/u.wav")
         wait_for(master, proc, PROMPT, 8.0)

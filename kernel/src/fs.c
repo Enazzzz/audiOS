@@ -384,6 +384,7 @@ void fs_cmd_storage(void)
 	tty_puts("Storage\n");
 	tty_set_color(TTY_COL_DIM);
 	tty_printf("device:   %s\n", disk.name);
+	tty_printf("disk:     %llu bytes\n", (unsigned long long)disk.sectors * 512ull);
 	tty_printf("fs:       FAT32 '%s'\n", fat_volume());
 	tty_printf("total:    %llu bytes\n", (unsigned long long)tot);
 	tty_printf("free:     %llu bytes\n", (unsigned long long)fr);
