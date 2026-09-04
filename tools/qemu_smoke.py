@@ -215,15 +215,22 @@ def main() -> int:
 
         send(master, "ls")
         text = wait_for(master, proc, PROMPT, 8.0)
-        if "audio" not in text.lower():
-            raise RuntimeError(f"ls root missing audio/\n{text}")
+        if "os/" not in text.lower() and "  os\n" not in text.lower():
+            raise RuntimeError(f"ls root missing os/ (system volume)\n{text}")
+        if "audio/" in text.lower():
+            raise RuntimeError(f"system audio/ leaked onto the data volume\n{text}")
 
-        send(master, "cd audio")
+        send(master, "ls /os")
+        text = wait_for(master, proc, PROMPT, 8.0)
+        if "audio" not in text.lower():
+            raise RuntimeError(f"ls /os missing audio/\n{text}")
+
+        send(master, "cd /os/audio")
         wait_for(master, proc, PROMPT, 5.0)
         send(master, "pwd")
         text = wait_for(master, proc, PROMPT, 5.0)
-        if "/audio" not in text.lower():
-            raise RuntimeError(f"pwd/cd failed\n{text}")
+        if "/os/audio" not in text.lower():
+            raise RuntimeError(f"pwd/cd /os/audio failed\n{text}")
 
         send(master, "ls")
         text = wait_for(master, proc, PROMPT, 8.0)
@@ -234,15 +241,15 @@ def main() -> int:
         wait_for(master, proc, PROMPT, 5.0)
         send(master, "pwd")
         text = wait_for(master, proc, PROMPT, 5.0)
-        if "/audio" in text.lower():
-            raise RuntimeError(f"cd / did not leave audio/\n{text}")
+        if "/os" in text.lower() or "/audio" in text.lower():
+            raise RuntimeError(f"cd / did not return to the data volume\n{text}")
 
         send(master, "mkdir notes")
         text = wait_for(master, proc, PROMPT, 8.0)
         if "created" not in text:
             raise RuntimeError(f"mkdir failed\n{text}")
 
-        send(master, "cp /audio/test.wav notes/t.wav")
+        send(master, "cp /os/audio/test.wav notes/t.wav")
         text = wait_for(master, proc, PROMPT, 15.0)
         if "copied" not in text:
             raise RuntimeError(f"cp failed\n{text}")
@@ -269,9 +276,14 @@ def main() -> int:
             raise RuntimeError(f"touch failed\n{text}")
 
         send(master, "storage")
-        text = wait_for(master, proc, PROMPT, 15.0)
+        text = wait_for(master, proc, PROMPT, 30.0)
         if "FAT32" not in text or "free" not in text:
             raise RuntimeError(f"storage failed\n{text}")
+        if "system" not in text.lower() or "data" not in text.lower():
+            raise RuntimeError(f"storage did not list both partitions\n{text}")
+        tot = re.search(r"data total:\s+(\d+)", text)
+        if tot is None or int(tot.group(1)) < 20_000_000:
+            raise RuntimeError(f"data partition did not take leftover USB space\n{text}")
 
         send(master, "rm notes/u.wav")
         wait_for(master, proc, PROMPT, 8.0)
@@ -302,7 +314,7 @@ def main() -> int:
         if "proc" not in text.lower():
             raise RuntimeError(f"proc chain failed\n{text}")
 
-        send(master, "save b audio/out.wav")
+        send(master, "save b out.wav")
         text = wait_for(master, proc, PROMPT, 15.0)
         if "saved" not in text.lower():
             raise RuntimeError(f"save wav failed\n{text}")
