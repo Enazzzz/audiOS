@@ -9,7 +9,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from qemu_smoke import PROMPT, drain, kernel_version, send, wait_for  # noqa: E402
+from qemu_smoke import PROMPT, drain, kernel_version, send, send_raw, wait_for  # noqa: E402
 
 
 def expect(master: int, proc, cmd: str, needles: tuple[str, ...], timeout: float = 10.0) -> str:
