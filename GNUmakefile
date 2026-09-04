@@ -55,8 +55,10 @@ run: $(IMAGE_NAME).iso audios-fs.img
 	qemu-system-$(ARCH) -M q35 -cdrom $(IMAGE_NAME).iso -boot d -serial stdio $(QEMUFLAGS) $(QEMU_AUDIO) $(QEMU_USB)
 
 .PHONY: test
-test: $(IMAGE_NAME).iso audios-fs.img
+test: $(IMAGE_NAME).iso $(IMAGE_NAME).img audios-fs.img
+	python3 tools/test_fat_lfn.py
 	python3 tools/qemu_smoke.py $(IMAGE_NAME).iso
+	python3 tools/qemu_img_boot.py $(IMAGE_NAME).img
 
 audios-fs.img: tools/make_fat.py media/test.wav media/bad.wav media/float.wav
 	python3 tools/make_fat.py audios-fs.img --size-mb 16 --dir audio \
@@ -69,6 +71,7 @@ $(IMAGE_NAME).img: limine-binary/limine kernel media/test.wav
 		--file kernel/bin-$(ARCH)/kernel:boot/kernel \
 		--file limine.conf:boot/limine/limine.conf \
 		--file limine-binary/limine-bios.sys:boot/limine/limine-bios.sys \
+		--file limine-binary/limine-bios.sys:limine-bios.sys \
 		--file media/test.wav:audio/test.wav \
 		--file media/bad.wav:audio/bad.wav \
 		--file media/float.wav:audio/float.wav
