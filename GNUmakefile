@@ -63,8 +63,10 @@ test: $(IMAGE_NAME).iso $(IMAGE_NAME).img audios-fs.img
 	python3 tools/qemu_img_boot.py $(IMAGE_NAME).img
 	python3 tools/qemu_ps2.py $(IMAGE_NAME).img
 
+# 16 MiB system partition, then pad the file so leftover USB exists for a
+# second FAT32 data partition (created by the kernel on first mount).
 audios-fs.img: tools/make_fat.py media/test.wav media/bad.wav media/float.wav tools/demo.aos
-	python3 tools/make_fat.py audios-fs.img --size-mb 16 --grow-mb 48 --dir audio \
+	python3 tools/make_fat.py audios-fs.img --size-mb 16 --dir audio \
 		--file media/test.wav:audio/test.wav \
 		--file media/bad.wav:audio/bad.wav \
 		--file media/float.wav:audio/float.wav \

@@ -24,22 +24,6 @@ ROOT_CLUS = 2
 LABEL = b"AUDIOS     "
 SPT = 63
 HEADS = 255
-# FAT tables are sized so the kernel can extend the 64 MiB flash image onto a
-# ~1 GiB stick without moving files. Larger sticks stop at this cap until we
-# ship a bigger image. 2 GiB FATs would eat the 64 MiB file (Limine FAT16).
-DEFAULT_GROW_MB = 1024
-
-
-def _clusters_for(part_sectors: int, spc: int, fat_sz: int) -> int | None:
-	"""Data-cluster count for a partition, or None if this FAT size is too small."""
-	data_secs = part_sectors - RESERVED - NUM_FATS * fat_sz
-	if data_secs <= spc:
-		return None
-	clusters = data_secs // spc
-	need = ((clusters + 2) * 4 + SECTOR - 1) // SECTOR
-	if fat_sz < need:
-		return None
-	return clusters
 
 
 def _short_name(name: str) -> bytes:
@@ -114,15 +98,11 @@ def _lfn_entries(name: str, checksum: int) -> list[bytes]:
 class FatImage:
 	"""In-memory FAT32 volume with a single MBR partition."""
 
-	def __init__(self, total_bytes: int, grow_mb: int | None = None) -> None:
+	def __init__(self, total_bytes: int) -> None:
 		if total_bytes < 8 * 1024 * 1024:
 			raise ValueError("image must be at least 8 MiB")
 		self.total_bytes = total_bytes
 		self.part_sectors = (total_bytes // SECTOR) - PART_START
-		if grow_mb is None:
-			mb = total_bytes // (1024 * 1024)
-			grow_mb = DEFAULT_GROW_MB if mb >= 64 else 48
-		self.grow_mb = grow_mb
 		self.data = bytearray(total_bytes)
 		self._init_geometry()
 		self._write_mbr()
@@ -132,34 +112,29 @@ class FatImage:
 		self._init_root()
 
 	def _init_geometry(self) -> None:
-		"""Cluster size for Limine FAT32; FAT length also covers grow_mb."""
-		img_part = self.part_sectors
-		cap_bytes = max(self.total_bytes, self.grow_mb * 1024 * 1024)
-		cap_part = (cap_bytes // SECTOR) - PART_START
-		if cap_part < img_part:
-			cap_part = img_part
+		"""Compute cluster size and FAT size so Limine still sees FAT32."""
+		# fat_sz * 512 / 4 = cluster entries.
+		# data_secs = part - reserved - 2*fat_sz
+		# clusters = data_secs / spc
+		# fat_sz >= ceil((clusters+2)*4 / 512)
 		for spc in SPC_CHOICES:
-			img_sz = None
 			for fat_sz in range(32, 65536):
-				if _clusters_for(img_part, spc, fat_sz) is not None:
-					img_sz = fat_sz
-					break
-			if img_sz is None:
-				continue
-			cap_sz = img_sz
-			for fat_sz in range(img_sz, 65536):
-				if _clusters_for(cap_part, spc, fat_sz) is not None:
-					cap_sz = fat_sz
-					break
-			clusters = _clusters_for(img_part, spc, cap_sz)
-			if clusters is None:
-				continue
-			if clusters >= MIN_FAT32_CLUSTERS or spc == 1:
-				self.spc = spc
-				self.fat_sz = cap_sz
-				self.clusters = clusters
-				self.data_lba = PART_START + RESERVED + NUM_FATS * cap_sz
-				return
+				data_secs = self.part_sectors - RESERVED - NUM_FATS * fat_sz
+				if data_secs <= spc:
+					continue
+				clusters = data_secs // spc
+				need = ((clusters + 2) * 4 + SECTOR - 1) // SECTOR
+				if fat_sz < need:
+					continue
+				# This (spc, fat_sz) pair fits. Keep it if it is FAT32, or
+				# if we are already on 512-byte clusters (small data sticks).
+				if clusters >= MIN_FAT32_CLUSTERS or spc == 1:
+					self.spc = spc
+					self.fat_sz = fat_sz
+					self.clusters = clusters
+					self.data_lba = PART_START + RESERVED + NUM_FATS * fat_sz
+					return
+				break
 		raise RuntimeError("could not size FAT")
 
 	def _lba_chs(self, lba: int) -> tuple[int, int, int]:
@@ -453,12 +428,10 @@ def main() -> int:
 	parser = argparse.ArgumentParser(description=__doc__)
 	parser.add_argument("image")
 	parser.add_argument("--size-mb", type=int, default=16)
-	parser.add_argument("--grow-mb", type=int, default=None,
-		help="size the FAT so the kernel can extend onto a stick this big (MiB)")
 	parser.add_argument("--file", action="append", default=[], help="host:dest (dest is FAT path)")
 	parser.add_argument("--dir", action="append", default=[], help="directory to create")
 	args = parser.parse_args()
-	img = FatImage(args.size_mb * 1024 * 1024, grow_mb=args.grow_mb)
+	img = FatImage(args.size_mb * 1024 * 1024)
 	for d in args.dir:
 		img.mkdir(d)
 	for spec in args.file:
@@ -468,10 +441,7 @@ def main() -> int:
 		host, dest = spec.split(":", 1)
 		img.add_file(dest, Path(host).read_bytes())
 	img.write(Path(args.image))
-	print(
-		f"wrote {args.image} ({args.size_mb} MiB image, FAT grows to ~{img.grow_mb} MiB, "
-		f"{img.clusters} clusters × {img.spc} sectors, fat_sz={img.fat_sz})"
-	)
+	print(f"wrote {args.image} ({args.size_mb} MiB FAT32, label AUDIOS, {img.clusters} clusters × {img.spc} sectors)")
 	return 0
 
 

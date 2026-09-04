@@ -4,7 +4,10 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-/** Probe USB MSC, mount FAT32 if present, never format. */
+/**
+ * Probe USB MSC, mount the system FAT32, and if leftover space is free,
+ * create a separate data partition. Never reformats the boot volume.
+ */
 void fs_init(void (*idle)(void));
 
 bool fs_ready(void);
