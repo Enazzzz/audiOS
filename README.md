@@ -69,10 +69,15 @@ make test
 ```
 
 For **persistent files**, flash **`audios.img`** as a raw disk: Balena
-Etcher, Rufus **DD image mode**, or `dd`. That image is MBR + FAT32;
-the kernel mounts it and writes stay on the stick across reboot. Do
-not flash `audios.iso` on this board — AMI legacy BIOS treats USB as
-a hard disk, and Limine then cannot see an ISO9660 stage 3.
+Etcher, Rufus **DD image mode**, or `dd`. Etcher is fine; a Limine
+**Stage 3 file not found** panic was a FAT geometry bug in the image
+(too few clusters, so Limine treated the volume as FAT16), not the
+flasher. Rebuild `audios.img` and write it again.
+
+That image is MBR + FAT32; the kernel mounts it and writes stay on the
+stick across reboot. Do not flash `audios.iso` on this board — AMI
+legacy BIOS treats USB as a hard disk, and Limine then cannot see an
+ISO9660 stage 3.
 
 On the Asrock: USB in a rear 2.0 port, PS/2 keyboard, VGA monitor,
 **F11** boot menu.

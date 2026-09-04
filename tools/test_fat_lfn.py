@@ -90,6 +90,14 @@ def main() -> int:
 		if "LIMINE-B.SYS" in names:
 			print("old truncated 8.3 name still used as the only name", names, file=sys.stderr)
 			return 1
+		# 64 MiB is the boot USB size. Cluster count must be FAT32 for Limine.
+		boot = FatImage(64 * 1024 * 1024)
+		if boot.clusters < 65525:
+			print(
+				f"boot image would be FAT16 to Limine ({boot.clusters} clusters, spc={boot.spc})",
+				file=sys.stderr,
+			)
+			return 1
 	print("FAT LFN for limine-bios.sys and limine.conf ok")
 	return 0
 

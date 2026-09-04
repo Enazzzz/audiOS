@@ -11,11 +11,19 @@ from pathlib import Path
 
 SECTOR = 512
 PART_START = 2048  # 1 MiB
-SPC = 8  # 4 KiB clusters
+# Microsoft FAT spec §3.5: filesystem type is the cluster count, not the
+# "FAT32   " signature. Limine follows that: below 65525 clusters it mounts
+# the volume as FAT16, fopen fails, and BIOS boot panics with "Stage 3 file
+# not found" even when limine-bios.sys is on the disk. Prefer 4 KiB clusters
+# only when the partition is large enough; otherwise drop to 512-byte clusters.
+MIN_FAT32_CLUSTERS = 65525
+SPC_CHOICES = (8, 4, 2, 1)
 RESERVED = 32
 NUM_FATS = 2
 ROOT_CLUS = 2
 LABEL = b"AUDIOS     "
+SPT = 63
+HEADS = 255
 
 
 def _short_name(name: str) -> bytes:
@@ -104,23 +112,40 @@ class FatImage:
 		self._init_root()
 
 	def _init_geometry(self) -> None:
-		"""Compute FAT size so data clusters fill the partition."""
-		# fat_sz * 512 / 4 = cluster entries. Need enough for data clusters.
+		"""Compute cluster size and FAT size so Limine still sees FAT32."""
+		# fat_sz * 512 / 4 = cluster entries.
 		# data_secs = part - reserved - 2*fat_sz
-		# clusters = data_secs / SPC
+		# clusters = data_secs / spc
 		# fat_sz >= ceil((clusters+2)*4 / 512)
-		for fat_sz in range(32, 65536):
-			data_secs = self.part_sectors - RESERVED - NUM_FATS * fat_sz
-			if data_secs <= SPC:
-				continue
-			clusters = data_secs // SPC
-			need = ((clusters + 2) * 4 + SECTOR - 1) // SECTOR
-			if fat_sz >= need:
-				self.fat_sz = fat_sz
-				self.clusters = clusters
-				self.data_lba = PART_START + RESERVED + NUM_FATS * fat_sz
-				return
+		for spc in SPC_CHOICES:
+			for fat_sz in range(32, 65536):
+				data_secs = self.part_sectors - RESERVED - NUM_FATS * fat_sz
+				if data_secs <= spc:
+					continue
+				clusters = data_secs // spc
+				need = ((clusters + 2) * 4 + SECTOR - 1) // SECTOR
+				if fat_sz < need:
+					continue
+				# This (spc, fat_sz) pair fits. Keep it if it is FAT32, or
+				# if we are already on 512-byte clusters (small data sticks).
+				if clusters >= MIN_FAT32_CLUSTERS or spc == 1:
+					self.spc = spc
+					self.fat_sz = fat_sz
+					self.clusters = clusters
+					self.data_lba = PART_START + RESERVED + NUM_FATS * fat_sz
+					return
+				break
 		raise RuntimeError("could not size FAT")
+
+	def _lba_chs(self, lba: int) -> tuple[int, int, int]:
+		"""Pack an LBA into MBR CHS bytes (capped at the 1024-cylinder BIOS limit)."""
+		cyl = lba // (SPT * HEADS)
+		rest = lba % (SPT * HEADS)
+		head = rest // SPT
+		sect = rest % SPT + 1
+		if cyl > 1023:
+			return (255, 255, 255)
+		return (head, (sect & 0x3F) | ((cyl >> 8) << 6), cyl & 0xFF)
 
 	def _psec(self, off: int, blob: bytes) -> None:
 		"""Write bytes at partition-relative sector offset."""
@@ -129,16 +154,19 @@ class FatImage:
 	def _write_mbr(self) -> None:
 		"""Protective MBR with one FAT32 LBA partition."""
 		# status 0x80, type 0x0C, start PART_START, size part_sectors
+		h0, s0, c0 = self._lba_chs(PART_START)
+		last = PART_START + self.part_sectors - 1
+		h1, s1, c1 = self._lba_chs(last)
 		ent = struct.pack(
 			"<BBBBBBBBII",
 			0x80,
-			0,
-			0,
-			0,
+			h0,
+			s0,
+			c0,
 			0x0C,
-			0,
-			0,
-			0,
+			h1,
+			s1,
+			c1,
 			PART_START,
 			self.part_sectors,
 		)
@@ -152,12 +180,12 @@ class FatImage:
 		boot[0:3] = b"\xEB\x58\x90"
 		boot[3:11] = b"MSWIN4.1"
 		struct.pack_into("<H", boot, 11, SECTOR)
-		boot[13] = SPC
+		boot[13] = self.spc
 		struct.pack_into("<H", boot, 14, RESERVED)
 		boot[16] = NUM_FATS
 		boot[21] = 0xF8
-		struct.pack_into("<H", boot, 24, 63)
-		struct.pack_into("<H", boot, 26, 255)
+		struct.pack_into("<H", boot, 24, SPT)
+		struct.pack_into("<H", boot, 26, HEADS)
 		struct.pack_into("<I", boot, 28, PART_START)
 		struct.pack_into("<I", boot, 32, self.part_sectors)
 		struct.pack_into("<I", boot, 36, self.fat_sz)
@@ -210,7 +238,7 @@ class FatImage:
 
 	def _clus_off(self, clus: int) -> int:
 		"""Byte offset of cluster `clus`."""
-		return (self.data_lba + (clus - 2) * SPC) * SECTOR
+		return (self.data_lba + (clus - 2) * self.spc) * SECTOR
 
 	def _init_root(self) -> None:
 		"""Empty root cluster with a volume-label entry."""
@@ -226,7 +254,7 @@ class FatImage:
 			if self._get_fat(c) == 0:
 				self._set_fat(c, 0x0FFFFFFF)
 				start = self._clus_off(c)
-				self.data[start : start + SPC * SECTOR] = b"\x00" * (SPC * SECTOR)
+				self.data[start : start + self.spc * SECTOR] = b"\x00" * (self.spc * SECTOR)
 				return c
 		raise RuntimeError("FAT full")
 
@@ -239,7 +267,7 @@ class FatImage:
 				break
 			seen.add(clus)
 			start = self._clus_off(clus)
-			blob.extend(self.data[start : start + SPC * SECTOR])
+			blob.extend(self.data[start : start + self.spc * SECTOR])
 			clus = self._get_fat(clus)
 		return blob
 
@@ -252,7 +280,7 @@ class FatImage:
 			if clus in seen:
 				break
 			seen.add(clus)
-			chunk = SPC * SECTOR
+			chunk = self.spc * SECTOR
 			piece = blob[pos : pos + chunk]
 			if len(piece) < chunk:
 				piece = piece + b"\x00" * (chunk - len(piece))
@@ -327,7 +355,7 @@ class FatImage:
 					first = c
 				if prev:
 					self._set_fat(prev, c)
-				chunk = remain[: SPC * SECTOR]
+				chunk = remain[: self.spc * SECTOR]
 				start = self._clus_off(c)
 				self.data[start : start + len(chunk)] = chunk
 				remain = remain[len(chunk) :]
@@ -352,7 +380,7 @@ class FatImage:
 			tail = nxt
 		newc = self._alloc_clus()
 		self._set_fat(tail, newc)
-		blob.extend(b"\x00" * (SPC * SECTOR))
+		blob.extend(b"\x00" * (self.spc * SECTOR))
 		return blob
 
 	def _free_slots(self, blob: bytearray, n: int) -> int:
@@ -413,7 +441,7 @@ def main() -> int:
 		host, dest = spec.split(":", 1)
 		img.add_file(dest, Path(host).read_bytes())
 	img.write(Path(args.image))
-	print(f"wrote {args.image} ({args.size_mb} MiB FAT32, label AUDIOS)")
+	print(f"wrote {args.image} ({args.size_mb} MiB FAT32, label AUDIOS, {img.clusters} clusters × {img.spc} sectors)")
 	return 0
 
 
