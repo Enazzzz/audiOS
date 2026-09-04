@@ -1,4 +1,4 @@
-"""Drive audiOS 0.0.6 HDA + FAT + music commands over QEMU serial and check capture."""
+"""Drive audiOS HDA + FAT + music commands over QEMU serial and check capture."""
 
 from __future__ import annotations
 
@@ -14,6 +14,16 @@ from pathlib import Path
 
 ANSI = re.compile(rb"\x1b\[[0-9;]*[A-Za-z]")
 PROMPT = "audiOS>"
+ROOT = Path(__file__).resolve().parents[1]
+
+
+def kernel_version() -> str:
+    """Read AUDIOS_VERSION_STRING so smoke tests follow patch bumps."""
+    text = (ROOT / "kernel" / "src" / "version.h").read_text(encoding="utf-8")
+    match = re.search(r'#define\s+AUDIOS_VERSION_STRING\s+"([^"]+)"', text)
+    if not match:
+        raise RuntimeError("AUDIOS_VERSION_STRING missing from version.h")
+    return match.group(1)
 
 
 def strip_ansi(data: bytes) -> str:
@@ -118,10 +128,12 @@ def main() -> int:
         close_fds=True,
     )
     os.close(slave)
+    ver = kernel_version()
+    banner = f"audiOS {ver}"
     try:
         text = wait_for(master, proc, PROMPT, 45.0)
-        if "audiOS 0.0.6" not in text:
-            raise RuntimeError(f"banner missing\n{text}")
+        if banner not in text:
+            raise RuntimeError(f"banner missing (want {banner!r})\n{text}")
         if "mounted FAT32" not in text and "USB MSC" not in text:
             raise RuntimeError(f"filesystem did not mount\n{text}")
 
@@ -321,8 +333,8 @@ def main() -> int:
 
         send(master, "version")
         text = wait_for(master, proc, PROMPT, 5.0)
-        if "0.0.6" not in text:
-            raise RuntimeError(f"still alive after audio errors?\n{text}")
+        if ver not in text:
+            raise RuntimeError(f"version command missing {ver!r}\n{text}")
 
         send(master, "reboot")
         try:
@@ -338,14 +350,14 @@ def main() -> int:
     analyze = Path(__file__).with_name("analyze_tone.py")
     if not capture.is_file() or capture.stat().st_size < 1024:
         print(f"warning: capture {capture} missing or tiny; skipping tone FFT", file=sys.stderr)
-        print("audiOS 0.0.6 smoke test passed (commands only)")
+        print(f"audiOS {ver} smoke test passed (commands only)")
         return 0
 
     rc = subprocess.call([sys.executable, str(analyze), str(capture), "440"])
     if rc != 0:
         print("command checks passed but captured audio was not a 440 Hz tone", file=sys.stderr)
         return 1
-    print("audiOS 0.0.6 smoke test passed")
+    print(f"audiOS {ver} smoke test passed")
     print("checked: HDA, FAT32 USB, clips load/slice/proc/save, seq, 440 Hz capture")
     return 0
 
