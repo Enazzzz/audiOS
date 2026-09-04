@@ -143,6 +143,15 @@ def main() -> int:
             raise RuntimeError(f"help missing commands\n{text}")
         if "edit" not in text:
             raise RuntimeError(f"help missing edit\n{text}")
+        if "tetris" not in text:
+            raise RuntimeError(f"help missing tetris\n{text}")
+
+        send(master, "tetris 0")
+        text = wait_for(master, proc, "NES tetris", 8.0)
+        if "LEVEL" not in text:
+            text += wait_for(master, proc, "LEVEL", 8.0)
+        os.write(master, b"q")
+        wait_for(master, proc, PROMPT, 8.0)
 
         send(master, "audio")
         text = wait_for(master, proc, PROMPT, 5.0)

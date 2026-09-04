@@ -20,4 +20,10 @@ void kbd_irq(void);
 /** Non-blocking key read. Returns -1 if empty, ASCII, Ctrl+letter as 1–26, or KBD_* . */
 int kbd_getc(void);
 
+/**
+ * True while a PS/2 arrow is physically down (scancode release tracked).
+ * Serial terminals never send key-up, so this stays 0 for COM1.
+ */
+int kbd_held(int key);
+
 #endif

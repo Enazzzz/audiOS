@@ -1,5 +1,6 @@
 #include "shell.h"
 #include "edit.h"
+#include "tetris.h"
 #include "audio.h"
 #include "clip.h"
 #include "cpu.h"
@@ -110,6 +111,7 @@ static void cmd_help(void)
 	tty_puts("  script <file>     run commands from a text file\n");
 	tty_puts("  ls [path]         list directory (/os is the system volume)\n");
 	tty_puts("  edit <file>       text editor  (^O save, ^X quit)\n");
+	tty_puts("  tetris [level]    NES-rules falling blocks (Q quit)\n");
 	tty_puts("  cd [path]         change directory\n");
 	tty_puts("  pwd               print working directory\n");
 	tty_puts("  mkdir <dir>       create directory\n");
@@ -329,6 +331,8 @@ static void shell_dispatch(char *cmd)
 		fs_cmd_mount();
 	} else if (strcmp(argv[0], "edit") == 0) {
 		edit_cmd(argc, argv);
+	} else if (strcmp(argv[0], "tetris") == 0) {
+		tetris_cmd(argc, argv);
 	} else if (strcmp(argv[0], "reboot") == 0) {
 		system_reboot();
 	} else if (music_is_verb(argv[0])) {

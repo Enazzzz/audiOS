@@ -53,12 +53,65 @@ void tty_set_idle(void (*fn)(void))
 	idle_fn = fn;
 }
 
+static uint32_t pack_rgb(uint32_t rgb);
+static void plot_at(size_t col, size_t row, unsigned char ch, uint32_t fg);
+
 /** Write bytes to COM1 without interpreting console state. */
 static void serial_puts_raw(const char *s)
 {
 	while (*s != '\0') {
 		serial_putc(*s++);
 	}
+}
+
+/** Decimal for CSI CUP (1-based row/column). */
+static void serial_uint(unsigned n)
+{
+	char tmp[10];
+	unsigned i = 0;
+	if (n == 0) {
+		serial_putc('0');
+		return;
+	}
+	while (n > 0 && i < sizeof(tmp)) {
+		tmp[i++] = (char)('0' + (n % 10u));
+		n /= 10u;
+	}
+	while (i > 0) {
+		serial_putc(tmp[--i]);
+	}
+}
+
+/**
+ * Update one cell in the RAM grid and the framebuffer. Serial gets a
+ * CUP + glyph only when the cell actually changed.
+ */
+void tty_put_xy(unsigned col, unsigned row, char ch, uint32_t rgb)
+{
+	if (view_off) {
+		tty_view_live();
+	}
+	if (col >= cols || row >= rows) {
+		return;
+	}
+	unsigned char uch = (unsigned char)ch;
+	if (uch < 32 || uch >= 127) {
+		uch = '?';
+	}
+	uint32_t packed = pack_rgb(rgb);
+	if (cells_ch[row][col] == uch && cells_fg[row][col] == packed) {
+		return;
+	}
+	cells_ch[row][col] = uch;
+	cells_fg[row][col] = packed;
+	plot_at(col, row, uch, packed);
+	serial_putc('\033');
+	serial_putc('[');
+	serial_uint(row + 1u);
+	serial_putc(';');
+	serial_uint(col + 1u);
+	serial_putc('H');
+	serial_putc((char)uch);
 }
 
 /** Pack a 0xRRGGBB colour using the framebuffer channel masks. */

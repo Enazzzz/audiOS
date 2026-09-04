@@ -1,11 +1,11 @@
 # audiOS
 
 audiOS is a lightweight, command-line-first operating system for digital
-audio. **v0.1.7** is built around one machine: the **ASRock 960GM-GS3 FX**
+audio. **v0.1.8** is built around one machine: the **ASRock 960GM-GS3 FX**
 (AMD FX, 760G/SB710, Realtek ALC662).
 
 ```
-audiOS 0.1.7
+audiOS 0.1.8
 96 kHz • 24-bit • 2 channels
 audiOS>
 ```
@@ -16,7 +16,7 @@ bumps **minor**. A huge turning point becomes **1.0.0** (v1.00). The old
 `0.0.2`–`0.0.6` trail and the first-kernel `0.1` tag are history; this
 line started as a naming reset at `0.1.0`, not a rollback.
 
-## What 0.1.7 does
+## What 0.1.8 does
 
 - Boots on that AM3+ board (legacy BIOS, VGA or GTX 1050). **PS/2 keyboard
   only.** `.img` boot takes EHCI for the stick, which kills BIOS USB-legacy,
@@ -33,6 +33,12 @@ line started as a naming reset at `0.1.0`, not a rollback.
   flash a new `audios.img`.
 - `edit <file>` is a small text editor (`^O` save, `^X` quit). PgUp / PgDn
   scroll the console.
+- `tetris [level]` is a text-mode falling-block game using **NES Tetris
+  rules** (Nintendo Rotation System, no wall kick, no lock delay, no hard
+  drop, NES gravity / DAS / scoring). It is original kernel code, not a
+  port of vitetris or other clones. Tetris is a trademark of Tetris
+  Holding; this is a fan recreation of the 1989 NES mechanics. PS/2
+  arrows hold DAS; Q quits, P pauses, X/Up rotate, Z the other way.
 - Named **clips** in RAM: load/save WAV, slice, join, mix, reverse, gain,
   filters, delay, pitch/stretch (integer resample), a non-grid sequencer
 - `play clip` or `play file.wav` (`loop` until `stop`)
@@ -71,7 +77,7 @@ Plug speakers or headphones into the **green rear jack**.
 `seq` `rec` `drop` `script`
 
 `ls` `cd` `pwd` `mkdir` `rm` `cp` `mv` `cat` `touch` `info` `storage` `mount`
-`edit`
+`edit` `tetris`
 
 Up / Down: previous / next command. PgUp / PgDn: scroll the console.
 
