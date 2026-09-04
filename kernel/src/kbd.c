@@ -39,6 +39,10 @@ static unsigned qtail;
 static int shift;
 static int ctrl;
 static int extended;
+static int held_left;
+static int held_right;
+static int held_down;
+static int held_up;
 
 static const char map_unshifted[128] = {
 	[0x02] = '1', [0x03] = '2', [0x04] = '3', [0x05] = '4', [0x06] = '5',
@@ -169,6 +173,10 @@ void kbd_init(void)
 	shift = 0;
 	ctrl = 0;
 	extended = 0;
+	held_left = 0;
+	held_right = 0;
+	held_down = 0;
+	held_up = 0;
 
 	if (kbd_absent()) {
 		goto out;
@@ -222,6 +230,16 @@ static void kbd_handle(uint8_t sc)
 	uint8_t code = sc & 0x7F;
 	if (extended) {
 		extended = 0;
+		/* Keep DAS / soft-drop accurate: NES needs key-up, not only taps. */
+		if (code == 0x4B) {
+			held_left = release ? 0 : 1;
+		} else if (code == 0x4D) {
+			held_right = release ? 0 : 1;
+		} else if (code == 0x50) {
+			held_down = release ? 0 : 1;
+		} else if (code == 0x48) {
+			held_up = release ? 0 : 1;
+		}
 		if (release) {
 			return;
 		}
@@ -302,4 +320,23 @@ int kbd_getc(void)
 	int key = queue[qtail];
 	qtail = (qtail + 1) % KBD_BUF_SIZE;
 	return key;
+}
+
+/** Arrow hold state for games that implement NES DAS. */
+int kbd_held(int key)
+{
+	kbd_poll();
+	if (key == KBD_LEFT) {
+		return held_left;
+	}
+	if (key == KBD_RIGHT) {
+		return held_right;
+	}
+	if (key == KBD_DOWN) {
+		return held_down;
+	}
+	if (key == KBD_UP) {
+		return held_up;
+	}
+	return 0;
 }

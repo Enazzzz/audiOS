@@ -9,7 +9,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from qemu_smoke import PROMPT, drain, kernel_version, send, wait_for  # noqa: E402
+from qemu_smoke import PROMPT, drain, kernel_version, send, send_raw, wait_for  # noqa: E402
 
 
 def expect(master: int, proc, cmd: str, needles: tuple[str, ...], timeout: float = 10.0) -> str:
@@ -89,7 +89,7 @@ def main() -> int:
 			raise RuntimeError(f"FAT did not mount\n{text}")
 		checked.append("boot banner + FAT mount")
 
-		expect(master, proc, "help", ("tone", "play", "music", "storage", "reboot", "script", "edit"))
+		expect(master, proc, "help", ("tone", "play", "music", "storage", "reboot", "script", "edit", "tetris"))
 		expect(master, proc, "clear", (f"audiOS {ver}", "96 kHz"))
 		expect(master, proc, "version", (ver, "build 0.", "ASRock", "uptime"))
 		expect(master, proc, "cpu", ("Processor", "vendor:", "family:"))
@@ -236,6 +236,14 @@ def main() -> int:
 		os.write(master, b"\x1b[B")
 		drain(master, 0.1)
 		checked.append("history Up")
+
+		send(master, "tetris 0")
+		text = wait_for(master, proc, "NES tetris", 8.0)
+		if "LEVEL" not in text:
+			text += wait_for(master, proc, "LEVEL", 8.0)
+		send_raw(master, b"q")
+		wait_for(master, proc, PROMPT, 8.0)
+		checked.append("tetris start/quit")
 
 		send(master, "reboot")
 		try:

@@ -59,8 +59,13 @@ def wait_for(master: int, proc: subprocess.Popen[bytes], needle: str, timeout: f
 
 
 def send(master: int, line: str) -> None:
-    """Type a command followed by CR."""
-    os.write(master, (line + "\r").encode("ascii"))
+	"""Type a command followed by CR."""
+	os.write(master, (line + "\r").encode("ascii"))
+
+
+def send_raw(master: int, data: bytes) -> None:
+	"""Write bytes with no trailing CR (game keys, editor, CSI)."""
+	os.write(master, data)
 
 
 def drain(master: int, seconds: float) -> None:
@@ -143,6 +148,15 @@ def main() -> int:
             raise RuntimeError(f"help missing commands\n{text}")
         if "edit" not in text:
             raise RuntimeError(f"help missing edit\n{text}")
+        if "tetris" not in text:
+            raise RuntimeError(f"help missing tetris\n{text}")
+
+        send(master, "tetris 0")
+        text = wait_for(master, proc, "NES tetris", 8.0)
+        if "LEVEL" not in text:
+            text += wait_for(master, proc, "LEVEL", 8.0)
+        os.write(master, b"q")
+        wait_for(master, proc, PROMPT, 8.0)
 
         send(master, "audio")
         text = wait_for(master, proc, PROMPT, 5.0)

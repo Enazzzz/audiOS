@@ -30,6 +30,13 @@ void tty_printf(const char *fmt, ...);
 /** Fill the screen and reset the cursor. */
 void tty_clear(void);
 
+/**
+ * Plot one glyph at a grid cell without moving the console cursor.
+ * Used by full-screen games so a 60 Hz redraw does not flood serial
+ * with a full `tty_clear`. Unchanged cells are skipped.
+ */
+void tty_put_xy(unsigned col, unsigned row, char ch, uint32_t rgb);
+
 /** Page the console through RAM scrollback (does not change the live buffer). */
 void tty_page_up(void);
 void tty_page_down(void);
