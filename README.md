@@ -61,6 +61,18 @@ Up / Down: previous / next command.
 `pitch` resamples (length follows pitch) unless you add `keep`.
 `stretch` changes length. DSP is integer/fixed-point (no FPU on this kernel).
 
+## Images (no local build)
+
+`audios.img` and `audios.iso` are **not** in the git tree. They are 64 MiB
+generated disks (like a compiler’s `.o` files) and would bloat history
+every time the kernel changed. CI builds them and attaches them to a
+GitHub Release:
+
+**https://github.com/Enazzzz/audiOS/releases/latest**
+
+Download `audios.img` (or `audios.img.gz`). Each Actions run also keeps
+the same files under the workflow’s **Artifacts** for 90 days.
+
 ## Build and boot on the FX box
 
 Needs a host GCC, GNU Make, `xorriso`, `curl`, `git`, `python3`, and QEMU.

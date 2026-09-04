@@ -4,6 +4,9 @@ on:
   push:
   pull_request:
 
+permissions:
+  contents: write
+
 jobs:
   test:
     runs-on: ubuntu-latest
@@ -13,3 +16,39 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y gcc make xorriso qemu-system-x86 mtools python3 curl git
       - name: Build ISO and smoke-test in QEMU
         run: make test
+      - name: Checksums
+        run: |
+          sha256sum audios.img audios.iso | tee SHA256SUMS
+          gzip -9 -k -f audios.img
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: audios-images
+          path: |
+            audios.img
+            audios.img.gz
+            audios.iso
+            SHA256SUMS
+          if-no-files-found: error
+          retention-days: 90
+      - name: Publish GitHub Release (main)
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: latest
+          name: audiOS images
+          target_commitish: ${{ github.sha }}
+          make_latest: true
+          body: |
+            Prebuilt disks from `${{ github.sha }}`.
+
+            Flash **`audios.img`** (or decompress `audios.img.gz` first) as a raw USB image on the ASRock 960GM-GS3 FX. Do not flash `audios.iso` on that board.
+
+            PS/2 keyboard. Rear USB 2.0. Etcher raw / Rufus DD / `dd`.
+          files: |
+            audios.img
+            audios.img.gz
+            audios.iso
+            SHA256SUMS
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
