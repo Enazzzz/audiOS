@@ -89,7 +89,7 @@ def main() -> int:
 			raise RuntimeError(f"FAT did not mount\n{text}")
 		checked.append("boot banner + FAT mount")
 
-		expect(master, proc, "help", ("tone", "play", "music", "storage", "reboot", "script"))
+		expect(master, proc, "help", ("tone", "play", "music", "storage", "reboot", "script", "edit"))
 		expect(master, proc, "clear", (f"audiOS {ver}", "96 kHz"))
 		expect(master, proc, "version", (ver, "build 0.", "ASRock", "uptime"))
 		expect(master, proc, "cpu", ("Processor", "vendor:", "family:"))
@@ -135,6 +135,7 @@ def main() -> int:
 		expect(master, proc, "ls", ("test.wav",))
 		expect(master, proc, "cd /", tuple())
 		expect(master, proc, "pwd", ("/",))
+		expect(master, proc, "edit", ("usage: edit",))
 		expect(master, proc, "mkdir scratch", ("created",))
 		expect(master, proc, "cp /os/audio/test.wav scratch/t.wav", ("copied",), 20.0)
 		expect(master, proc, "info scratch/t.wav", ("file", "size"))

@@ -33,6 +33,8 @@ struct fat_vol {
 	uint8_t *f_clus_buf;
 	char f_volume[12];
 	int f_mounted;
+	uint32_t f_search;
+	uint32_t f_loaded;
 };
 
 static struct fat_vol vols[2];
@@ -56,6 +58,8 @@ static enum fat_vol_id current_vol;
 #define clus_buf	(v->f_clus_buf)
 #define volume		(v->f_volume)
 #define mounted		(v->f_mounted)
+#define search_clus	(v->f_search)
+#define loaded_clus	(v->f_loaded)
 
 /** Call the audio idle hook so USB mkfs does not underrun the DAC. */
 static void fat_pump(void)
@@ -131,22 +135,44 @@ const char *fat_volume(void)
 	return volume[0] ? volume : "UNNAMED";
 }
 
-/** Read `count` sectors at partition-relative LBA `lba`. */
+/**
+ * Read `count` sectors one at a time. Multi-sector MSC on the SB710 EHCI
+ * path fails on the data volume (4 KiB clusters) while 512-byte system
+ * clusters still work — that is why only `/os` accepted creates.
+ */
 static int rd(uint32_t lba, uint32_t count, void *buf)
 {
+	uint8_t *p = buf;
 	if (bd == NULL || bd->read == NULL) {
+		fat_fail("read error");
 		return -1;
 	}
-	return bd->read(part_lba + lba, count, buf);
+	for (uint32_t i = 0; i < count; i++) {
+		if (bd->read(part_lba + lba + i, 1, p + i * SECTOR) != 0) {
+			fat_fail("read error");
+			return -1;
+		}
+		fat_pump();
+	}
+	return 0;
 }
 
-/** Write `count` sectors at partition-relative LBA `lba`. */
+/** Write `count` sectors one at a time (same USB constraint as `rd`). */
 static int wr(uint32_t lba, uint32_t count, const void *buf)
 {
+	const uint8_t *p = buf;
 	if (bd == NULL || bd->write == NULL) {
+		fat_fail("write error");
 		return -1;
 	}
-	return bd->write(part_lba + lba, count, buf);
+	for (uint32_t i = 0; i < count; i++) {
+		if (bd->write(part_lba + lba + i, 1, p + i * SECTOR) != 0) {
+			fat_fail("write error");
+			return -1;
+		}
+		fat_pump();
+	}
+	return 0;
 }
 
 static uint32_t r16(const uint8_t *p)
@@ -238,7 +264,15 @@ static int read_clus(uint32_t clus)
 	if (clus < 2 || clus >= EOC) {
 		return -1;
 	}
-	return rd(clus_lba(clus), spc, clus_buf);
+	if (loaded_clus == clus) {
+		return 0;
+	}
+	if (rd(clus_lba(clus), spc, clus_buf) != 0) {
+		loaded_clus = 0xFFFFFFFFu;
+		return -1;
+	}
+	loaded_clus = clus;
+	return 0;
 }
 
 static int write_clus(uint32_t clus)
@@ -246,14 +280,49 @@ static int write_clus(uint32_t clus)
 	if (clus < 2 || clus >= EOC) {
 		return -1;
 	}
-	return wr(clus_lba(clus), spc, clus_buf);
+	if (wr(clus_lba(clus), spc, clus_buf) != 0) {
+		loaded_clus = 0xFFFFFFFFu;
+		return -1;
+	}
+	loaded_clus = clus;
+	return 0;
+}
+
+/** Highest cluster index the FAT tables can name. */
+static uint32_t fat_max_clus(void)
+{
+	uint32_t entries = (fat_sz * SECTOR) / 4u;
+	if (entries < 4u) {
+		return 2;
+	}
+	uint32_t cap = entries - 2u;
+	if (cap > total_clusters) {
+		cap = total_clusters;
+	}
+	return cap;
 }
 
 static uint32_t alloc_clus(void)
 {
-	for (uint32_t c = 2; c < total_clusters + 2; c++) {
-		if (fat_get(c) == 0) {
+	uint32_t cap = fat_max_clus();
+	uint32_t start = search_clus;
+	if (start < 3u || start >= cap + 2u) {
+		start = 3u;
+	}
+	for (uint32_t pass = 0; pass < 2u; pass++) {
+		uint32_t begin = (pass == 0) ? start : 3u;
+		uint32_t end = (pass == 0) ? (cap + 2u) : start;
+		for (uint32_t c = begin; c < end; c++) {
+			uint32_t ent = fat_get(c);
+			if (ent == BAD) {
+				fat_fail("read error");
+				return 0;
+			}
+			if (ent != 0) {
+				continue;
+			}
 			if (fat_set(c, 0x0FFFFFFFu) != 0) {
+				fat_fail("write error");
 				return 0;
 			}
 			memset(clus_buf, 0, cluster_bytes);
@@ -261,8 +330,10 @@ static uint32_t alloc_clus(void)
 				return 0;
 			}
 			if (fat_flush() != 0) {
+				fat_fail("write error");
 				return 0;
 			}
+			search_clus = c + 1u;
 			return c;
 		}
 	}
@@ -856,6 +927,7 @@ bool fat_mkdir(const char *path)
 	dot[32 + 11] = ATTR_DIR;
 	ent_set_clus(dot + 32, parent == root_clus ? 0 : parent);
 	if (write_clus(c) != 0) {
+		fat_fail("write error");
 		return false;
 	}
 	return dir_add(parent, leaf, ATTR_DIR, c, 0);
@@ -1044,7 +1116,17 @@ uint64_t fat_bytes_total(void)
 uint64_t fat_bytes_free(void)
 {
 	uint64_t free_c = 0;
-	for (uint32_t c = 2; c < total_clusters + 2; c++) {
+	uint32_t cap = fat_max_clus();
+	uint32_t last_sec = 0xFFFFFFFFu;
+	for (uint32_t c = 2; c < cap + 2; c++) {
+		uint32_t sec = (c * 4u) / SECTOR;
+		if (sec != last_sec) {
+			if (fat_load(sec) != 0) {
+				break;
+			}
+			last_sec = sec;
+			fat_pump();
+		}
 		if (fat_get(c) == 0) {
 			free_c++;
 		}
@@ -1129,6 +1211,14 @@ static int fat_bind(void)
 		return 0;
 	}
 	total_clusters = (totsec - data_begin) / spc;
+	{
+		uint32_t entries = (fat_sz * SECTOR) / 4u;
+		if (entries >= 4u && total_clusters + 2u > entries) {
+			total_clusters = entries - 2u;
+		}
+	}
+	search_clus = 3;
+	loaded_clus = 0xFFFFFFFFu;
 	memcpy(volume, bpb + 71, 11);
 	volume[11] = '\0';
 	for (int i = 10; i >= 0 && volume[i] == ' '; i--) {

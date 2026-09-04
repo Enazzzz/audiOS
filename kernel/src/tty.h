@@ -30,6 +30,17 @@ void tty_printf(const char *fmt, ...);
 /** Fill the screen and reset the cursor. */
 void tty_clear(void);
 
+/** Page the console through RAM scrollback (does not change the live buffer). */
+void tty_page_up(void);
+void tty_page_down(void);
+
+/** Jump the view back to the live prompt line. */
+void tty_view_live(void);
+
+/** Text grid size after `tty_init`. */
+unsigned tty_cols(void);
+unsigned tty_rows(void);
+
 /** Draw or erase the hardware cursor bar using the PIT clock. */
 void tty_tick_cursor(uint64_t ticks);
 

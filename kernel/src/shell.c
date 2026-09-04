@@ -1,4 +1,5 @@
 #include "shell.h"
+#include "edit.h"
 #include "audio.h"
 #include "clip.h"
 #include "cpu.h"
@@ -25,6 +26,7 @@ static unsigned hist_pos;
 static char draft[LINE_MAX];
 static int browsing;
 static int esc;	/* 0, 1 = ESC, 2 = CSI, 3 = SS3 (serial arrows) */
+static unsigned esc_num;
 
 /** Trim leading/trailing whitespace in place. */
 static void trim_inplace(char *s)
@@ -107,6 +109,7 @@ static void cmd_help(void)
 	tty_puts("  music             clip / DSP / seq / rec commands\n");
 	tty_puts("  script <file>     run commands from a text file\n");
 	tty_puts("  ls [path]         list directory (/os is the system volume)\n");
+	tty_puts("  edit <file>       text editor  (^O save, ^X quit)\n");
 	tty_puts("  cd [path]         change directory\n");
 	tty_puts("  pwd               print working directory\n");
 	tty_puts("  mkdir <dir>       create directory\n");
@@ -117,6 +120,7 @@ static void cmd_help(void)
 	tty_puts("  touch <file>      create empty file\n");
 	tty_puts("  info <path>       file metadata\n");
 	tty_puts("  storage           capacity and free space\n");
+	tty_puts("  PgUp / PgDn       scroll the console\n");
 	tty_puts("  mount             mount status / retry\n");
 	tty_puts("  reboot            restart the machine\n");
 	tty_puts("  Up / Down         previous / next command (PowerShell-style)\n");
@@ -323,6 +327,8 @@ static void shell_dispatch(char *cmd)
 		cmd_script(argc > 1 ? argv[1] : "");
 	} else if (strcmp(argv[0], "mount") == 0) {
 		fs_cmd_mount();
+	} else if (strcmp(argv[0], "edit") == 0) {
+		edit_cmd(argc, argv);
 	} else if (strcmp(argv[0], "reboot") == 0) {
 		system_reboot();
 	} else if (music_is_verb(argv[0])) {
@@ -345,6 +351,7 @@ static void shell_feed(int c)
 	if (esc == 1) {
 		if (c == '[') {
 			esc = 2;
+			esc_num = 0;
 			return;
 		}
 		if (c == 'O') {
@@ -353,6 +360,10 @@ static void shell_feed(int c)
 		}
 		esc = 0;
 	} else if (esc == 2 || esc == 3) {
+		if (esc == 2 && c >= '0' && c <= '9') {
+			esc_num = esc_num * 10u + (unsigned)(c - '0');
+			return;
+		}
 		esc = 0;
 		if (c == 'A') {
 			hist_up();
@@ -360,6 +371,14 @@ static void shell_feed(int c)
 		}
 		if (c == 'B') {
 			hist_down();
+			return;
+		}
+		if (c == '~') {
+			if (esc_num == 5) {
+				tty_page_up();
+			} else if (esc_num == 6) {
+				tty_page_down();
+			}
 			return;
 		}
 		return;
@@ -383,6 +402,14 @@ static void shell_feed(int c)
 	}
 	if (c == KBD_DOWN) {
 		hist_down();
+		return;
+	}
+	if (c == KBD_PGUP) {
+		tty_page_up();
+		return;
+	}
+	if (c == KBD_PGDN) {
+		tty_page_down();
 		return;
 	}
 	if (c == '\b' || c == 0x7F) {

@@ -37,6 +37,7 @@ static int queue[KBD_BUF_SIZE];
 static unsigned qhead;
 static unsigned qtail;
 static int shift;
+static int ctrl;
 static int extended;
 
 static const char map_unshifted[128] = {
@@ -166,6 +167,7 @@ void kbd_init(void)
 	qhead = 0;
 	qtail = 0;
 	shift = 0;
+	ctrl = 0;
 	extended = 0;
 
 	if (kbd_absent()) {
@@ -227,7 +229,23 @@ static void kbd_handle(uint8_t sc)
 			kbd_push(KBD_UP);
 		} else if (code == 0x50) {
 			kbd_push(KBD_DOWN);
+		} else if (code == 0x4B) {
+			kbd_push(KBD_LEFT);
+		} else if (code == 0x4D) {
+			kbd_push(KBD_RIGHT);
+		} else if (code == 0x49) {
+			kbd_push(KBD_PGUP);
+		} else if (code == 0x51) {
+			kbd_push(KBD_PGDN);
+		} else if (code == 0x47) {
+			kbd_push(KBD_HOME);
+		} else if (code == 0x4F) {
+			kbd_push(KBD_END);
 		}
+		return;
+	}
+	if (code == 0x1D) {
+		ctrl = release ? 0 : 1;
 		return;
 	}
 	if (code == 0x2A || code == 0x36) {
@@ -238,9 +256,18 @@ static void kbd_handle(uint8_t sc)
 		return;
 	}
 	char ch = shift ? map_shifted[code] : map_unshifted[code];
-	if (ch != 0) {
-		kbd_push((unsigned char)ch);
+	if (ch == 0) {
+		return;
 	}
+	if (ctrl && ch >= 'a' && ch <= 'z') {
+		kbd_push((int)(ch - 'a' + 1));
+		return;
+	}
+	if (ctrl && ch >= 'A' && ch <= 'Z') {
+		kbd_push((int)(ch - 'A' + 1));
+		return;
+	}
+	kbd_push((unsigned char)ch);
 }
 
 /** IRQ1 path: consume the data port. Harmless if the poll loop already did. */
