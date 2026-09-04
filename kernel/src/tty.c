@@ -33,6 +33,13 @@ static uint8_t cells_ch[TTY_MAX_ROWS][TTY_MAX_COLS];
 static uint32_t cells_fg[TTY_MAX_ROWS][TTY_MAX_COLS];
 static uint32_t pix[TTY_MAX_ROWS * FONT_HEIGHT * TTY_PIX_STRIDE];
 
+#define TTY_BACK	96
+static uint8_t back_ch[TTY_BACK][TTY_MAX_COLS];
+static uint32_t back_fg[TTY_BACK][TTY_MAX_COLS];
+static unsigned back_n;
+static unsigned back_head;
+static unsigned view_off;
+
 /** Refill audio (or anything else) if the shell registered a pump. */
 static void tty_idle(void)
 {
@@ -103,6 +110,8 @@ static void plot_at(size_t col, size_t row, unsigned char ch, uint32_t fg)
 	}
 }
 
+static void tty_hide_cursor(void);
+
 /** Burst the RAM shadow to the GPU as whole scanlines (write-combining). */
 static void tty_flush_shadow(void)
 {
@@ -143,6 +152,100 @@ static void tty_flush_shadow(void)
 	tty_idle();
 }
 
+/** Chronological scrollback row `i` (0 = oldest). */
+static void hist_row(unsigned i, uint8_t **ch, uint32_t **fg)
+{
+	unsigned slot;
+	if (back_n < TTY_BACK) {
+		slot = i;
+	} else {
+		slot = (back_head + i) % TTY_BACK;
+	}
+	*ch = back_ch[slot];
+	*fg = back_fg[slot];
+}
+
+/** Paint the visible window from scrollback + live cells. */
+static void tty_redraw_view(void)
+{
+	unsigned total = back_n + (unsigned)rows;
+	unsigned start = 0;
+	if (total > (unsigned)rows + view_off) {
+		start = total - (unsigned)rows - view_off;
+	}
+	tty_hide_cursor();
+	for (unsigned r = 0; r < (unsigned)rows; r++) {
+		unsigned idx = start + r;
+		const uint8_t *ch;
+		const uint32_t *fg;
+		uint8_t *hch;
+		uint32_t *hfg;
+		if (idx < back_n) {
+			hist_row(idx, &hch, &hfg);
+			ch = hch;
+			fg = hfg;
+		} else {
+			unsigned lr = idx - back_n;
+			if (lr >= rows) {
+				lr = (unsigned)rows - 1;
+			}
+			ch = cells_ch[lr];
+			fg = cells_fg[lr];
+		}
+		for (unsigned c = 0; c < (unsigned)cols; c++) {
+			plot_at(c, r, ch[c] ? ch[c] : ' ', fg[c] ? fg[c] : packed_fg);
+		}
+		tty_idle();
+	}
+}
+
+void tty_view_live(void)
+{
+	if (view_off == 0) {
+		return;
+	}
+	view_off = 0;
+	tty_redraw_view();
+}
+
+void tty_page_up(void)
+{
+	unsigned step = (unsigned)rows / 2u;
+	if (step == 0) {
+		step = 1;
+	}
+	if (view_off + step > back_n) {
+		view_off = back_n;
+	} else {
+		view_off += step;
+	}
+	tty_redraw_view();
+}
+
+void tty_page_down(void)
+{
+	unsigned step = (unsigned)rows / 2u;
+	if (step == 0) {
+		step = 1;
+	}
+	if (view_off <= step) {
+		view_off = 0;
+	} else {
+		view_off -= step;
+	}
+	tty_redraw_view();
+}
+
+unsigned tty_cols(void)
+{
+	return (unsigned)cols;
+}
+
+unsigned tty_rows(void)
+{
+	return (unsigned)rows;
+}
+
 /**
  * Scroll the console up one text row.
  * RAM memmove of cells + pixels, then one sequential blit. Never reads VRAM.
@@ -151,6 +254,14 @@ static void tty_scroll(void)
 {
 	if (rows == 0) {
 		return;
+	}
+	if (cols > 0) {
+		memcpy(back_ch[back_head], cells_ch[0], cols);
+		memcpy(back_fg[back_head], cells_fg[0], cols * sizeof(uint32_t));
+		back_head = (back_head + 1u) % TTY_BACK;
+		if (back_n < TTY_BACK) {
+			back_n++;
+		}
 	}
 	if (rows > 1) {
 		memmove(&cells_ch[0][0], &cells_ch[1][0],
@@ -267,6 +378,9 @@ void tty_set_color(uint32_t rgb)
 void tty_clear(void)
 {
 	tty_hide_cursor();
+	back_n = 0;
+	back_head = 0;
+	view_off = 0;
 	for (size_t r = 0; r < TTY_MAX_ROWS; r++) {
 		for (size_t c = 0; c < TTY_MAX_COLS; c++) {
 			cells_ch[r][c] = ' ';
@@ -298,6 +412,9 @@ void tty_clear(void)
 /** Emit a decoded glyph, including the identity bullet at FONT_BULLET. */
 static void tty_emit(unsigned char ch)
 {
+	if (view_off) {
+		tty_view_live();
+	}
 	tty_hide_cursor();
 	if (ch == '\n') {
 		serial_putc('\n');

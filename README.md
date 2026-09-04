@@ -1,11 +1,11 @@
 # audiOS
 
 audiOS is a lightweight, command-line-first operating system for digital
-audio. **v0.1.6** is built around one machine: the **ASRock 960GM-GS3 FX**
+audio. **v0.1.7** is built around one machine: the **ASRock 960GM-GS3 FX**
 (AMD FX, 760G/SB710, Realtek ALC662).
 
 ```
-audiOS 0.1.6
+audiOS 0.1.7
 96 kHz • 24-bit • 2 channels
 audiOS>
 ```
@@ -16,7 +16,7 @@ bumps **minor**. A huge turning point becomes **1.0.0** (v1.00). The old
 `0.0.2`–`0.0.6` trail and the first-kernel `0.1` tag are history; this
 line started as a naming reset at `0.1.0`, not a rollback.
 
-## What 0.1.6 does
+## What 0.1.7 does
 
 - Boots on that AM3+ board (legacy BIOS, VGA or GTX 1050). **PS/2 keyboard
   only.** `.img` boot takes EHCI for the stick, which kills BIOS USB-legacy,
@@ -26,9 +26,13 @@ line started as a naming reset at `0.1.0`, not a rollback.
 - Persistent **FAT32** on the boot USB (EHCI mass storage). Partition 1 is
   the 64 MiB system volume (Limine, kernel, stock `audio/`). Leftover space
   on the stick becomes a second FAT32 **data** volume on first mount. The
-  shell starts on the data volume; system files are under `/os`. The boot
+  shell starts on the data volume; system files are under `/os`. USB I/O
+  is one 512-byte sector at a time so 4 KiB data-volume clusters work on
+  the SB710 (creates outside `/os` were failing with `ok`). The boot
   partition is not reformatted. A 0.0.6 stick cannot be split in place —
   flash a new `audios.img`.
+- `edit <file>` is a small text editor (`^O` save, `^X` quit). PgUp / PgDn
+  scroll the console.
 - Named **clips** in RAM: load/save WAV, slice, join, mix, reverse, gain,
   filters, delay, pitch/stretch (integer resample), a non-grid sequencer
 - `play clip` or `play file.wav` (`loop` until `stop`)
@@ -67,8 +71,9 @@ Plug speakers or headphones into the **green rear jack**.
 `seq` `rec` `drop` `script`
 
 `ls` `cd` `pwd` `mkdir` `rm` `cp` `mv` `cat` `touch` `info` `storage` `mount`
+`edit`
 
-Up / Down: previous / next command.
+Up / Down: previous / next command. PgUp / PgDn: scroll the console.
 
 `pitch` resamples (length follows pitch) unless you add `keep`.
 `stretch` changes length. DSP is integer/fixed-point (no FPU on this kernel).

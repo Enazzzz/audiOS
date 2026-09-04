@@ -141,6 +141,8 @@ def main() -> int:
         text = wait_for(master, proc, PROMPT, 5.0)
         if "tone" not in text or "play" not in text or "storage" not in text or "music" not in text:
             raise RuntimeError(f"help missing commands\n{text}")
+        if "edit" not in text:
+            raise RuntimeError(f"help missing edit\n{text}")
 
         send(master, "audio")
         text = wait_for(master, proc, PROMPT, 5.0)
@@ -248,6 +250,16 @@ def main() -> int:
         text = wait_for(master, proc, PROMPT, 8.0)
         if "created" not in text:
             raise RuntimeError(f"mkdir failed\n{text}")
+        if text.lower().strip().endswith("ok") and "created" not in text:
+            raise RuntimeError(f"mkdir failed with empty error\n{text}")
+
+        for i in range(12):
+            send(master, f"mkdir d{i}")
+            text = wait_for(master, proc, PROMPT, 10.0)
+            if "created" not in text:
+                raise RuntimeError(f"data-volume mkdir {i} failed\n{text}")
+            send(master, f"rm d{i}")
+            wait_for(master, proc, PROMPT, 10.0)
 
         send(master, "cp /os/audio/test.wav notes/t.wav")
         text = wait_for(master, proc, PROMPT, 15.0)

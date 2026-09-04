@@ -11,7 +11,7 @@
 #define EHCI_SUB	0x03
 #define EHCI_PI		0x20
 
-#define USB_TIMEOUT	500u
+#define USB_TIMEOUT	2000u
 
 /* Operational registers */
 #define USBCMD		0x00
@@ -108,6 +108,7 @@ static uint32_t scsi_tag;
 static uint64_t msc_sectors;
 static char msc_name[40];
 static int msc_ready;
+static uint8_t msc_iface;
 static unsigned tog_in;
 static unsigned tog_out;
 
@@ -350,6 +351,20 @@ static int scsi(uint8_t *cdb, uint8_t cdblen, int in, void *data, uint32_t len)
 	return 0;
 }
 
+/** BOT reset + clear endpoint halt so a failed 4 KiB transfer does not wedge MSC. */
+static void msc_recover(void)
+{
+	(void)ctrl(dev_addr, 0x21, 0xFF, 0, msc_iface, NULL, 0);
+	usb_wait_ms(10);
+	(void)ctrl(dev_addr, 0x02, 1, 0, ep_out, NULL, 0);
+	(void)ctrl(dev_addr, 0x02, 1, 0, (uint16_t)(0x80u | ep_in), NULL, 0);
+	tog_in = 0;
+	tog_out = 0;
+	qh_ep->token = QTD_HALT;
+	qh_ep->next = 1;
+	usb_wait_ms(10);
+}
+
 /** BOT SCSI with a few retries — QEMU EHCI on GitHub runners drops a packet now and then. */
 static int scsi_retry(uint8_t *cdb, uint8_t cdblen, int in, void *data, uint32_t len)
 {
@@ -357,6 +372,7 @@ static int scsi_retry(uint8_t *cdb, uint8_t cdblen, int in, void *data, uint32_t
 		if (scsi(cdb, cdblen, in, data, len) == 0) {
 			return 0;
 		}
+		msc_recover();
 		usb_wait_ms(10u << (unsigned)t);
 	}
 	return -1;
@@ -366,10 +382,7 @@ static int msc_read_lba(uint64_t lba, uint32_t count, void *buf)
 {
 	uint8_t *dst = buf;
 	while (count > 0) {
-		uint32_t n = count;
-		if (n > 32) {
-			n = 32;
-		}
+		uint32_t n = 1;
 		uint8_t cdb[16];
 		memset(cdb, 0, sizeof(cdb));
 		cdb[0] = 0x28;
@@ -393,10 +406,7 @@ static int msc_write_lba(uint64_t lba, uint32_t count, const void *buf)
 {
 	const uint8_t *src = buf;
 	while (count > 0) {
-		uint32_t n = count;
-		if (n > 32) {
-			n = 32;
-		}
+		uint32_t n = 1;
 		uint8_t cdb[16];
 		memset(cdb, 0, sizeof(cdb));
 		cdb[0] = 0x2A;
@@ -432,6 +442,9 @@ static int parse_msc(const uint8_t *cfg, uint16_t total)
 		}
 		if (typ == 4 && len >= 9) {
 			want = (cfg[off + 5] == 8 && cfg[off + 6] == 6 && cfg[off + 7] == 0x50);
+			if (want) {
+				msc_iface = cfg[off + 2];
+			}
 		} else if (want && typ == 5 && len >= 7) {
 			uint8_t addr = cfg[off + 2];
 			uint8_t attr = cfg[off + 3];
