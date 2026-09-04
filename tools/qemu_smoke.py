@@ -63,6 +63,11 @@ def send(master: int, line: str) -> None:
     os.write(master, (line + "\r").encode("ascii"))
 
 
+def send_raw(master: int, data: bytes) -> None:
+    """Write bytes with no trailing CR (editor keys, CSI, Ctrl)."""
+    os.write(master, data)
+
+
 def drain(master: int, seconds: float) -> None:
     """Let the guest run (and play audio) while discarding serial."""
     deadline = time.time() + seconds

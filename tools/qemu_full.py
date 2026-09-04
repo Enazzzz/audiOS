@@ -9,7 +9,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from qemu_smoke import PROMPT, drain, kernel_version, send, wait_for  # noqa: E402
+from qemu_smoke import PROMPT, drain, kernel_version, send, send_raw, wait_for  # noqa: E402
 
 
 def expect(master: int, proc, cmd: str, needles: tuple[str, ...], timeout: float = 10.0) -> str:
@@ -137,6 +137,15 @@ def main() -> int:
 		expect(master, proc, "pwd", ("/",))
 		expect(master, proc, "edit", ("usage: edit",))
 		expect(master, proc, "mkdir scratch", ("created",))
+		send(master, "edit scratch/hi.txt")
+		wait_for(master, proc, "^O save", 8.0)
+		send_raw(master, b"hello data")
+		wait_for(master, proc, "hello data", 8.0)
+		send_raw(master, b"\x0f")  # Ctrl-O save
+		wait_for(master, proc, "edit scratch/hi.txt", 8.0)
+		send_raw(master, b"\x18")  # Ctrl-X quit
+		wait_for(master, proc, PROMPT, 8.0)
+		expect(master, proc, "cat scratch/hi.txt", ("hello data",), 10.0)
 		expect(master, proc, "cp /os/audio/test.wav scratch/t.wav", ("copied",), 20.0)
 		expect(master, proc, "info scratch/t.wav", ("file", "size"))
 		expect(master, proc, "mv scratch/t.wav scratch/u.wav", ("moved",), 20.0)
@@ -152,6 +161,7 @@ def main() -> int:
 		wait_for(master, proc, PROMPT, 5.0)
 		expect(master, proc, "rm scratch/u.wav", ("removed",))
 		expect(master, proc, "rm scratch/note", ("removed",))
+		expect(master, proc, "rm scratch/hi.txt", ("removed",))
 		expect(master, proc, "rm scratch", ("removed",))
 		checked.append("FAT ls/cd/pwd/mkdir/cp/mv/cat/touch/info/storage/mount/script/rm")
 
