@@ -26,4 +26,7 @@ int kbd_getc(void);
  */
 int kbd_held(int key);
 
+/** Drop any queued key so a full-screen app does not eat a leftover character. */
+void kbd_flush_queue(void);
+
 #endif

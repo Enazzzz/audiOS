@@ -37,9 +37,20 @@ void tty_clear(void);
  */
 void tty_put_xy(unsigned col, unsigned row, char ch, uint32_t rgb);
 
+/** Scroll the console view by one history line (hold-repeat uses this). */
+void tty_line_up(void);
+void tty_line_down(void);
+
 /** Page the console through RAM scrollback (does not change the live buffer). */
 void tty_page_up(void);
 void tty_page_down(void);
+
+/** Hide the underline cursor (editor / games). */
+void tty_cursor_hide(void);
+
+/** Framebuffer size Limine actually set (pixels). */
+unsigned tty_fb_width(void);
+unsigned tty_fb_height(void);
 
 /** Jump the view back to the live prompt line. */
 void tty_view_live(void);

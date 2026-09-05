@@ -16,11 +16,14 @@ enum fat_kind {
 	FAT_DIR
 };
 
-/** Boot/system volume vs leftover user-data volume. */
+/** C: boot/system, D: leftover data on the same stick, E: extra USB. */
 enum fat_vol_id {
 	FAT_VOL_SYS = 0,
-	FAT_VOL_USR = 1
+	FAT_VOL_USR = 1,
+	FAT_VOL_EXT = 2
 };
+
+#define FAT_VOL_COUNT	3
 
 struct fat_info {
 	enum fat_kind kind;
@@ -43,6 +46,12 @@ void fat_set_idle(void (*idle)(void));
  * there (or mount it if it already exists). Does not reformat partition 1.
  */
 bool fat_mount(struct blkdev *dev);
+
+/**
+ * Mount the first FAT32 partition of a second USB stick as E:.
+ * Never formats that disk.
+ */
+bool fat_mount_extra(struct blkdev *dev);
 
 bool fat_mounted(void);
 bool fat_vol_ready(enum fat_vol_id id);

@@ -6,12 +6,14 @@
 #include <stdbool.h>
 
 /**
- * Probe PCI EHCI, enumerate high-speed mass storage, and fill `out`.
- * Full/low-speed ports are parked onto the companion controller so they
- * do not stall EHCI. Keyboard input is PS/2, not USB HID.
- * Never formats the boot/system partition. Leftover unpartitioned space
- * may become a new data volume on first mount.
+ * Probe PCI EHCI and bind high-speed MSC. `boot` is the stick we booted
+ * from (C: + D:). `extra`, if non-NULL, receives a second stick (E:)
+ * when another root port has mass storage. Keyboard input is PS/2.
+ * Never formats the boot/system partition.
  */
-bool usb_msc_init(struct blkdev *out, void (*idle)(void));
+bool usb_msc_init(struct blkdev *boot, struct blkdev *extra, void (*idle)(void));
+
+/** Probe remaining EHCI ports for a newly connected stick without dropping the boot device. */
+bool usb_msc_scan_extra(struct blkdev *extra);
 
 #endif

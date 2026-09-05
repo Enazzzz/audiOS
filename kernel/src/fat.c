@@ -37,7 +37,7 @@ struct fat_vol {
 	uint32_t f_loaded;
 };
 
-static struct fat_vol vols[2];
+static struct fat_vol vols[FAT_VOL_COUNT];
 static struct fat_vol *v;
 static void (*idle_cb)(void);
 static char last_err[80];
@@ -92,31 +92,24 @@ bool fat_mounted(void)
 	return vols[FAT_VOL_SYS].f_mounted != 0;
 }
 
+/** True for C:/D:/E: volume ids that exist in `vols`. */
+static int vol_ok(enum fat_vol_id id)
+{
+	return id == FAT_VOL_SYS || id == FAT_VOL_USR || id == FAT_VOL_EXT;
+}
+
 bool fat_vol_ready(enum fat_vol_id id)
 {
-	switch (id) {
-	case FAT_VOL_SYS:
-	case FAT_VOL_USR:
-		return vols[id].f_mounted != 0;
-	default: {
-		enum fat_vol_id unknown = id;
-		(void)unknown;
+	if (!vol_ok(id)) {
 		return false;
 	}
-	}
+	return vols[id].f_mounted != 0;
 }
 
 void fat_select(enum fat_vol_id id)
 {
-	switch (id) {
-	case FAT_VOL_SYS:
-	case FAT_VOL_USR:
-		break;
-	default: {
-		enum fat_vol_id unknown = id;
-		(void)unknown;
+	if (!vol_ok(id)) {
 		return;
-	}
 	}
 	if (v != NULL && v->f_fat_cache_dirty) {
 		(void)fat_flush();
@@ -1616,7 +1609,8 @@ static void fat_prepare_user(struct blkdev *dev)
 bool fat_mount(struct blkdev *dev)
 {
 	last_err[0] = '\0';
-	memset(vols, 0, sizeof(vols));
+	memset(&vols[FAT_VOL_SYS], 0, sizeof(vols[FAT_VOL_SYS]));
+	memset(&vols[FAT_VOL_USR], 0, sizeof(vols[FAT_VOL_USR]));
 	v = &vols[FAT_VOL_SYS];
 	current_vol = FAT_VOL_SYS;
 	if (dev == NULL) {
@@ -1642,53 +1636,58 @@ bool fat_mount(struct blkdev *dev)
 	return true;
 }
 
+/**
+ * Mount another disk's first FAT32 partition as E:. Never mkfs.
+ * Used for a second USB stick (updates, extra files).
+ */
+bool fat_mount_extra(struct blkdev *dev)
+{
+	if (dev == NULL || dev->sectors == 0) {
+		fat_fail("no extra disk");
+		return false;
+	}
+	enum fat_vol_id old = current_vol;
+	fat_select(FAT_VOL_EXT);
+	memset(&vols[FAT_VOL_EXT], 0, sizeof(vols[FAT_VOL_EXT]));
+	v = &vols[FAT_VOL_EXT];
+	current_vol = FAT_VOL_EXT;
+	bd = dev;
+	if (!find_part()) {
+		vols[FAT_VOL_EXT].f_mounted = 0;
+		fat_select(old);
+		return false;
+	}
+	if (!fat_bind()) {
+		vols[FAT_VOL_EXT].f_mounted = 0;
+		fat_select(old);
+		return false;
+	}
+	tty_set_color(TTY_COL_AUDIO);
+	tty_printf("fs: mounted FAT32 extra '%s' as E:\n", fat_volume());
+	tty_set_color(TTY_COL_FG);
+	fat_select(old);
+	return true;
+}
+
 const char *fat_vol_name(enum fat_vol_id id)
 {
-	switch (id) {
-	case FAT_VOL_SYS:
-	case FAT_VOL_USR:
-		if (!vols[id].f_mounted) {
-			return "";
-		}
-		return vols[id].f_volume[0] ? vols[id].f_volume : "UNNAMED";
-	default: {
-		enum fat_vol_id unknown = id;
-		(void)unknown;
+	if (!vol_ok(id) || !vols[id].f_mounted) {
 		return "";
 	}
-	}
+	return vols[id].f_volume[0] ? vols[id].f_volume : "UNNAMED";
 }
 
 uint64_t fat_vol_bytes_total(enum fat_vol_id id)
 {
-	switch (id) {
-	case FAT_VOL_SYS:
-	case FAT_VOL_USR:
-		if (!vols[id].f_mounted) {
-			return 0;
-		}
-		return (uint64_t)vols[id].f_total_clusters * vols[id].f_cluster_bytes;
-	default: {
-		enum fat_vol_id unknown = id;
-		(void)unknown;
+	if (!vol_ok(id) || !vols[id].f_mounted) {
 		return 0;
 	}
-	}
+	return (uint64_t)vols[id].f_total_clusters * vols[id].f_cluster_bytes;
 }
 
 uint64_t fat_vol_bytes_free(enum fat_vol_id id)
 {
-	switch (id) {
-	case FAT_VOL_SYS:
-	case FAT_VOL_USR:
-		break;
-	default: {
-		enum fat_vol_id unknown = id;
-		(void)unknown;
-		return 0;
-	}
-	}
-	if (!vols[id].f_mounted) {
+	if (!vol_ok(id) || !vols[id].f_mounted) {
 		return 0;
 	}
 	enum fat_vol_id old = current_vol;

@@ -40,6 +40,11 @@ static unsigned back_n;
 static unsigned back_head;
 static unsigned view_off;
 
+/* Last glyphs actually painted to the GPU while viewing scrollback. */
+static uint8_t view_ch[TTY_MAX_ROWS][TTY_MAX_COLS];
+static uint32_t view_fg[TTY_MAX_ROWS][TTY_MAX_COLS];
+static int view_valid;
+
 /** Refill audio (or anything else) if the shell registered a pump. */
 static void tty_idle(void)
 {
@@ -246,10 +251,18 @@ static void tty_redraw_view(void)
 			fg = cells_fg[lr];
 		}
 		for (unsigned c = 0; c < (unsigned)cols; c++) {
-			plot_at(c, r, ch[c] ? ch[c] : ' ', fg[c] ? fg[c] : packed_fg);
+			unsigned char glyph = ch[c] ? ch[c] : ' ';
+			uint32_t colour = fg[c] ? fg[c] : packed_fg;
+			if (view_valid && view_ch[r][c] == glyph && view_fg[r][c] == colour) {
+				continue;
+			}
+			view_ch[r][c] = glyph;
+			view_fg[r][c] = colour;
+			plot_at(c, r, glyph, colour);
 		}
 		tty_idle();
 	}
+	view_valid = 1;
 }
 
 void tty_view_live(void)
@@ -258,35 +271,56 @@ void tty_view_live(void)
 		return;
 	}
 	view_off = 0;
+	view_valid = 0;
 	tty_redraw_view();
+}
+
+/** Move the history window by one row. */
+static void tty_nudge_view(int dir)
+{
+	if (dir < 0) {
+		if (view_off < back_n) {
+			view_off++;
+		}
+	} else if (view_off > 0) {
+		view_off--;
+	}
+	tty_redraw_view();
+}
+
+void tty_line_up(void)
+{
+	tty_nudge_view(-1);
+}
+
+void tty_line_down(void)
+{
+	tty_nudge_view(1);
 }
 
 void tty_page_up(void)
 {
-	unsigned step = (unsigned)rows / 2u;
-	if (step == 0) {
-		step = 1;
-	}
-	if (view_off + step > back_n) {
-		view_off = back_n;
-	} else {
-		view_off += step;
-	}
-	tty_redraw_view();
+	tty_line_up();
 }
 
 void tty_page_down(void)
 {
-	unsigned step = (unsigned)rows / 2u;
-	if (step == 0) {
-		step = 1;
-	}
-	if (view_off <= step) {
-		view_off = 0;
-	} else {
-		view_off -= step;
-	}
-	tty_redraw_view();
+	tty_line_down();
+}
+
+unsigned tty_fb_width(void)
+{
+	return (fb != NULL) ? (unsigned)fb->width : 0;
+}
+
+unsigned tty_fb_height(void)
+{
+	return (fb != NULL) ? (unsigned)fb->height : 0;
+}
+
+void tty_cursor_hide(void)
+{
+	tty_hide_cursor();
 }
 
 unsigned tty_cols(void)
@@ -338,6 +372,7 @@ static void tty_scroll(void)
 		cells_fg[rows - 1][c] = packed_fg;
 	}
 	tty_flush_shadow();
+	view_valid = 0;
 	cursor_row = rows - 1;
 	cursor_col = 0;
 }
@@ -434,6 +469,7 @@ void tty_clear(void)
 	back_n = 0;
 	back_head = 0;
 	view_off = 0;
+	view_valid = 0;
 	for (size_t r = 0; r < TTY_MAX_ROWS; r++) {
 		for (size_t c = 0; c < TTY_MAX_COLS; c++) {
 			cells_ch[r][c] = ' ';
@@ -468,6 +504,7 @@ static void tty_emit(unsigned char ch)
 	if (view_off) {
 		tty_view_live();
 	}
+	view_valid = 0;
 	tty_hide_cursor();
 	if (ch == '\n') {
 		serial_putc('\n');
@@ -565,7 +602,7 @@ void tty_printf(const char *fmt, ...)
 /** Blink the cursor at 2 Hz from the PIT tick count. */
 void tty_tick_cursor(uint64_t ticks)
 {
-	if (fb == NULL) {
+	if (fb == NULL || view_off != 0) {
 		return;
 	}
 	int show = ((ticks / 250) % 2) == 0;

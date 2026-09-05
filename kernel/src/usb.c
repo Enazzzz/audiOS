@@ -112,6 +112,63 @@ static uint8_t msc_iface;
 static unsigned tog_in;
 static unsigned tog_out;
 
+#define USB_MSC_MAX	2
+
+struct usb_msc {
+	uint8_t addr;
+	uint8_t ep_in;
+	uint8_t ep_out;
+	uint8_t iface;
+	uint16_t maxpkt;
+	unsigned tog_in;
+	unsigned tog_out;
+	uint64_t sectors;
+	char name[40];
+	int ready;
+	unsigned port;
+};
+
+static struct usb_msc units[USB_MSC_MAX];
+static unsigned nunits;
+static int ehci_ready;
+static unsigned boot_port = 0xFFu;
+static uint8_t next_usb_addr = 1;
+
+/** Copy live BOT session into slot `i`. */
+static void msc_store(unsigned i)
+{
+	if (i >= USB_MSC_MAX) {
+		return;
+	}
+	units[i].addr = dev_addr;
+	units[i].ep_in = ep_in;
+	units[i].ep_out = ep_out;
+	units[i].iface = msc_iface;
+	units[i].maxpkt = maxpkt;
+	units[i].tog_in = tog_in;
+	units[i].tog_out = tog_out;
+	units[i].sectors = msc_sectors;
+	ksnprintf(units[i].name, sizeof(units[i].name), "%s", msc_name);
+	units[i].ready = 1;
+}
+
+/** Make slot `i` the live BOT session. */
+static void msc_load(unsigned i)
+{
+	if (i >= USB_MSC_MAX || !units[i].ready) {
+		return;
+	}
+	dev_addr = units[i].addr;
+	ep_in = units[i].ep_in;
+	ep_out = units[i].ep_out;
+	msc_iface = units[i].iface;
+	maxpkt = units[i].maxpkt;
+	tog_in = units[i].tog_in;
+	tog_out = units[i].tog_out;
+	msc_sectors = units[i].sectors;
+	msc_ready = 1;
+}
+
 static uint32_t cap32(uint32_t off)
 {
 	return *(volatile uint32_t *)(cap + off);
@@ -426,6 +483,61 @@ static int msc_write_lba(uint64_t lba, uint32_t count, const void *buf)
 	return 0;
 }
 
+/** Read/write against a stored MSC unit (boot stick vs extra stick). */
+static int msc_read_unit(unsigned unit, uint64_t lba, uint32_t count, void *buf)
+{
+	if (unit >= nunits || !units[unit].ready) {
+		return -1;
+	}
+	msc_load(unit);
+	int r = msc_read_lba(lba, count, buf);
+	msc_store(unit);
+	return r;
+}
+
+static int msc_write_unit(unsigned unit, uint64_t lba, uint32_t count, const void *buf)
+{
+	if (unit >= nunits || !units[unit].ready) {
+		return -1;
+	}
+	msc_load(unit);
+	int r = msc_write_lba(lba, count, buf);
+	msc_store(unit);
+	return r;
+}
+
+static int boot_read(uint64_t lba, uint32_t count, void *buf)
+{
+	return msc_read_unit(0, lba, count, buf);
+}
+
+static int boot_write(uint64_t lba, uint32_t count, const void *buf)
+{
+	return msc_write_unit(0, lba, count, buf);
+}
+
+static int extra_read(uint64_t lba, uint32_t count, void *buf)
+{
+	return msc_read_unit(1, lba, count, buf);
+}
+
+static int extra_write(uint64_t lba, uint32_t count, const void *buf)
+{
+	return msc_write_unit(1, lba, count, buf);
+}
+
+/** Fill a blkdev from MSC slot `unit`. */
+static void msc_bind_dev(struct blkdev *out, unsigned unit)
+{
+	if (out == NULL || unit >= nunits) {
+		return;
+	}
+	out->read = (unit == 0) ? boot_read : extra_read;
+	out->write = (unit == 0) ? boot_write : extra_write;
+	out->sectors = units[unit].sectors;
+	ksnprintf(out->name, sizeof(out->name), "%s", units[unit].name);
+}
+
 /** Parse a config descriptor for BOT MSC bulk endpoints. */
 static int parse_msc(const uint8_t *cfg, uint16_t total)
 {
@@ -561,16 +673,23 @@ static int port_probe(unsigned i, uint8_t *next_addr)
 	}
 	uint8_t addr = *next_addr;
 	if (try_msc(addr)) {
+		(*next_addr)++;
 		return 1;
 	}
 	(*next_addr)++;
 	return 0;
 }
 
-bool usb_msc_init(struct blkdev *out, void (*idle)(void))
+bool usb_msc_init(struct blkdev *boot, struct blkdev *extra, void (*idle)(void))
 {
 	msc_ready = 0;
+	nunits = 0;
+	ehci_ready = 0;
+	next_usb_addr = 1;
 	idle_fn = idle;
+	if (extra) {
+		memset(extra, 0, sizeof(*extra));
+	}
 	qh_async = phys_alloc(sizeof(struct ehci_qh), &qh_async_phys);
 	qh_ep = phys_alloc(sizeof(struct ehci_qh), &qh_ep_phys);
 	qtds = phys_alloc(sizeof(struct ehci_qtd) * 4, &qtd_phys);
@@ -609,27 +728,63 @@ bool usb_msc_init(struct blkdev *out, void (*idle)(void))
 		if (!ehci_start()) {
 			continue;
 		}
-		uint8_t addr = 1;
-		int found = 0;
-		for (unsigned i = 0; i < nports; i++) {
-			if (port_probe(i, &addr)) {
-				out->read = msc_read_lba;
-				out->write = msc_write_lba;
-				out->sectors = msc_sectors;
-				ksnprintf(out->name, sizeof(out->name), "%s", msc_name);
-				tty_printf("usb: %s\n", msc_name);
-				found = 1;
-				break;
+		ehci_ready = 1;
+		for (unsigned i = 0; i < nports && nunits < USB_MSC_MAX; i++) {
+			if (!port_probe(i, &next_usb_addr)) {
+				continue;
 			}
+			units[nunits].port = i;
+			msc_store(nunits);
+			tty_printf("usb: %s\n", msc_name);
+			nunits++;
 		}
-		if (found) {
-			return true;
+		if (nunits > 0) {
+			break;
 		}
 	}
-	if (!any) {
-		tty_puts("usb: no EHCI controller\n");
-	} else {
-		tty_puts("usb: no high-speed mass storage\n");
+	if (nunits == 0) {
+		if (!any) {
+			tty_puts("usb: no EHCI controller\n");
+		} else {
+			tty_puts("usb: no high-speed mass storage\n");
+		}
+		return false;
 	}
-	return false;
+	boot_port = units[0].port;
+	msc_bind_dev(boot, 0);
+	if (extra && nunits >= 2) {
+		msc_bind_dev(extra, 1);
+	}
+	return true;
+}
+
+/** Look for a second HS MSC on ports that are not the boot stick. */
+bool usb_msc_scan_extra(struct blkdev *extra)
+{
+	if (extra == NULL || !ehci_ready) {
+		return false;
+	}
+	if (nunits >= 2 && units[1].ready) {
+		msc_bind_dev(extra, 1);
+		return true;
+	}
+	for (unsigned i = 0; i < nports && nunits < USB_MSC_MAX; i++) {
+		if (i == boot_port) {
+			continue;
+		}
+		uint32_t sc = opr(PORTSC + i * 4);
+		if ((sc & PORT_CCS) == 0) {
+			continue;
+		}
+		if (!port_probe(i, &next_usb_addr)) {
+			continue;
+		}
+		units[nunits].port = i;
+		msc_store(nunits);
+		tty_printf("usb: extra %s\n", msc_name);
+		nunits++;
+		msc_bind_dev(extra, 1);
+		return true;
+	}
+	return extra->sectors != 0;
 }
