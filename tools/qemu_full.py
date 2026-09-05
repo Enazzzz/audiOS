@@ -131,7 +131,8 @@ def main() -> int:
 		checked.append("tone waveforms + continuous + stop")
 
 		expect(master, proc, "ls", ("os",))
-		expect(master, proc, "ls /os", ("audio",))
+		expect(master, proc, "ls /os", ("audio", "README"))
+		expect(master, proc, "type C:/README.TXT", ("temporary", "D:"))
 		expect(master, proc, "cd /os/audio", tuple())
 		expect(master, proc, "pwd", ("C:/audio",))
 		expect(master, proc, "ls", ("test.wav",))

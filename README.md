@@ -28,7 +28,9 @@ line started as a naming reset at `0.1.0`, not a rollback.
   64 MiB system volume (Limine, kernel, stock `audio/`). **D:** is the
   leftover data volume (created on first mount, never reformatted when you
   `update`). **E:** is a second USB stick if `mount` finds one. `/os` is
-  still C:. `cd C:` / `cd D:` / `C:` switch volumes. USB I/O is one
+  still C:. `C:/README.TXT` says everything on C: is temporary until the
+  next update — keep lasting files on D:. `cd C:` / `cd D:` / `C:` switch
+  volumes. USB I/O is one
   512-byte sector at a time so 4 KiB data-volume clusters work on the SB710.
 - **Updates without wiping D:** do not raw-flash a new `audios.img` over
   the whole stick (that rewrites the MBR and drops partition 2). Either

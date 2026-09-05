@@ -65,15 +65,16 @@ test: $(IMAGE_NAME).iso $(IMAGE_NAME).img audios-fs.img
 
 # 16 MiB system partition, then pad the file so leftover USB exists for a
 # second FAT32 data partition (created by the kernel on first mount).
-audios-fs.img: tools/make_fat.py media/test.wav media/bad.wav media/float.wav tools/demo.aos
+audios-fs.img: tools/make_fat.py media/test.wav media/bad.wav media/float.wav tools/demo.aos tools/C_README.txt
 	python3 tools/make_fat.py audios-fs.img --size-mb 16 --dir audio \
 		--file media/test.wav:audio/test.wav \
 		--file media/bad.wav:audio/bad.wav \
 		--file media/float.wav:audio/float.wav \
-		--file tools/demo.aos:demo.aos
+		--file tools/demo.aos:demo.aos \
+		--file tools/C_README.txt:README.TXT
 	python3 -c "import os; os.truncate('audios-fs.img', 48 * 1024 * 1024)"
 
-$(IMAGE_NAME).img: limine-binary/limine kernel media/test.wav tools/demo.aos
+$(IMAGE_NAME).img: limine-binary/limine kernel media/test.wav tools/demo.aos tools/C_README.txt
 	python3 tools/make_fat.py $(IMAGE_NAME).img --size-mb 64 --dir boot --dir audio --dir boot/limine \
 		--file kernel/bin-$(ARCH)/kernel:boot/kernel \
 		--file limine.conf:boot/limine/limine.conf \
@@ -82,7 +83,8 @@ $(IMAGE_NAME).img: limine-binary/limine kernel media/test.wav tools/demo.aos
 		--file media/test.wav:audio/test.wav \
 		--file media/bad.wav:audio/bad.wav \
 		--file media/float.wav:audio/float.wav \
-		--file tools/demo.aos:demo.aos
+		--file tools/demo.aos:demo.aos \
+		--file tools/C_README.txt:README.TXT
 	./limine-binary/limine bios-install $(IMAGE_NAME).img
 
 media/test.wav: tools/gen_wav.py

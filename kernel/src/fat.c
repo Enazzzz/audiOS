@@ -1627,6 +1627,28 @@ bool fat_mount(struct blkdev *dev)
 	tty_set_color(TTY_COL_AUDIO);
 	tty_printf("fs: mounted FAT32 system '%s'\n", fat_volume());
 	tty_set_color(TTY_COL_FG);
+	/* Remind that C: is replaced on the next system update. */
+	{
+		static const char readme[] =
+			"audiOS C:  (system volume)\r\n"
+			"\r\n"
+			"All files here are temporary until the next update.\r\n"
+			"\r\n"
+			"A C: update (Windows: update-system.ps1, Linux: update_system.py,\r\n"
+			"or writing partition 1) replaces this entire volume: kernel, boot\r\n"
+			"files, and anything you saved on C:.\r\n"
+			"\r\n"
+			"Keep files you care about on D:.\r\n"
+			"/os is another name for C:.\r\n"
+			"E: is a second USB stick if one is plugged in.\r\n";
+		char have[512];
+		uint32_t n = 0;
+		uint32_t want = (uint32_t)(sizeof(readme) - 1u);
+		if (!fat_read("/README.TXT", have, sizeof(have), &n)
+			|| n != want || memcmp(have, readme, want) != 0) {
+			(void)fat_write("/README.TXT", readme, want);
+		}
+	}
 	fat_prepare_user(dev);
 	if (vols[FAT_VOL_USR].f_mounted) {
 		fat_select(FAT_VOL_USR);
