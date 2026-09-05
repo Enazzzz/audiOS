@@ -33,9 +33,11 @@ line started as a naming reset at `0.1.0`, not a rollback.
 - **Updates without wiping D:** do not raw-flash a new `audios.img` over
   the whole stick (that rewrites the MBR and drops partition 2). Either
   `update E:/boot/kernel` / `update D:/boot/kernel` (copies onto C: only)
-  or on a host `python3 tools/update_system.py /dev/sdX audios.img` which
-  writes partition 1 in place and leaves D: alone. First install is still
-  a full image flash.
+  or on a host write partition 1 in place:
+  Windows `.\tools\update-system.ps1 -Elevate` (replaces
+  `flash-latest-release.ps1` for day-to-day bumps), or
+  `python3 tools/update_system.py /dev/sdX audios.img`. First install is
+  still a full image flash (`flash-latest-release.ps1 -Full`).
 - `edit <file>` wraps long lines and redraws dirty cells only (`^O` save,
   `^X` quit). PgUp / PgDn on the console move **one line**; hold for a
   slow continuous scroll. Full-screen clears are no longer used for every
@@ -125,17 +127,25 @@ fundamental, square has odd harmonics, saw has a harmonic series, noise
 is not a tone, silence is quiet, `play test.wav` stays 440 Hz, L=R, no
 clipping. That is QEMU's HDA capture, not the ASRock analog jack.
 
-For **persistent files**, flash **`audios.img`** as a raw disk: Balena
-Etcher, Rufus **DD image mode**, or `dd`. Etcher is fine; a Limine
-**Stage 3 file not found** panic was a FAT geometry bug in the image
-(too few clusters, so Limine treated the volume as FAT16), not the
-flasher. Rebuild `audios.img` and write it again.
+For **persistent files**, first install is a full raw **`audios.img`**:
+`.\tools\flash-latest-release.ps1 -Elevate`, Balena Etcher, Rufus **DD
+image mode**, or `dd`. Etcher is fine; a Limine **Stage 3 file not
+found** panic was a FAT geometry bug in the image (too few clusters, so
+Limine treated the volume as FAT16), not the flasher.
 
 That image is MBR + two FAT32 partitions after first boot: **C:** system
-(the 64 MiB image) and **D:** data. Later kernel bumps: `update` or
-`tools/update_system.py` so D: is not wiped. Do not flash `audios.iso`
-on this board — AMI legacy BIOS treats USB as a hard disk, and Limine
-then cannot see an ISO9660 stage 3.
+(the 64 MiB image) and **D:** data. Later kernel bumps — **do not
+full-flash again**. On Windows:
+
+```
+.\tools\update-system.ps1 -Elevate
+```
+
+That downloads the latest release and writes C: only. `flash-latest-release.ps1`
+now refuses a stick that already has D: unless you pass `-Full`. Linux:
+`python3 tools/update_system.py /dev/sdX audios.img`. On the board:
+`update`. Do not flash `audios.iso` on this machine — AMI legacy BIOS
+treats USB as a hard disk, and Limine then cannot see an ISO9660 stage 3.
 
 On the Asrock: USB in a rear 2.0 port, PS/2 keyboard, VGA monitor,
 **F11** boot menu.

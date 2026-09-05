@@ -890,7 +890,7 @@ void fs_cmd_update(int argc, char **argv)
 		tty_puts("usage: update [kernel|dir]\n");
 		tty_puts("copy a new kernel onto C: without touching D:\n");
 		tty_puts("looks for E:/boot/kernel, D:/update/boot/kernel, D:/boot/kernel\n");
-		tty_puts("host: python3 tools/update_system.py <usb> audios.img\n");
+		tty_puts("host: tools/update-system.ps1  or  python3 tools/update_system.py\n");
 		return;
 	}
 	struct fat_info inf;

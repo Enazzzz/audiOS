@@ -8,6 +8,8 @@ Usage:
   python3 tools/update_system.py /dev/sdX audios.img
   python3 tools/update_system.py --dry-run /dev/sdX audios.img
 
+Windows: tools/update-system.ps1 -Elevate  (same C:-only write).
+
 Needs root. Does not format, mkfs, or touch partition 2.
 """
 
