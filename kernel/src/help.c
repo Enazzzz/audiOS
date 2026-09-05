@@ -199,7 +199,16 @@ void help_list(void)
 	tty_set_color(TTY_COL_DIM);
 	for (i = 0; rows[i].name; i++) {
 		char line[96];
-		ksnprintf(line, sizeof(line), "  %-16s %s\n", rows[i].name, rows[i].brief);
+		char namepad[20];
+		unsigned n;
+		unsigned k;
+		/* ksnprintf has no %-16s; pad the name by hand. */
+		n = (unsigned)strlen(rows[i].name);
+		for (k = 0; k < 16u && k < sizeof(namepad) - 1u; k++) {
+			namepad[k] = (k < n) ? rows[i].name[k] : ' ';
+		}
+		namepad[16] = '\0';
+		ksnprintf(line, sizeof(line), "  %s %s\n", namepad, rows[i].brief);
 		tty_puts(line);
 		if (strcmp(rows[i].name, "audio") == 0) {
 			tty_puts("  audio help        audio / tone / play commands\n");
