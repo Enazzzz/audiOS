@@ -153,7 +153,7 @@ def main() -> int:
 		expect(master, proc, "audio help", ("audio help", "tone"))
 		expect(master, proc, "tetris scores", ("tetris scores", "2G"))
 		expect(master, proc, "storage", ("FAT32", "free", "data"))
-		expect(master, proc, "mount", ("FAT32", "mounted"))
+		expect(master, proc, "mount", ("FAT32", "C:", "D:"))
 		expect(master, proc, "script /os/demo.aos", ("D:/", ver), 15.0)
 		expect(master, proc, "update", ("usage: update", "D:"))
 		send(master, "play scratch/u.wav")
