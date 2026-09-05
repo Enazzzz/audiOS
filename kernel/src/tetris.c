@@ -295,12 +295,12 @@ static void scores_print(void)
 	tty_puts("NES tetris scores (D:/tetris.scr)\n");
 	if (nscore == 0) {
 		tty_puts("  (empty)\n");
-		return;
-	}
-	for (unsigned i = 0; i < nscore; i++) {
-		tty_printf("  %u. %s  %u  L%u  lv%u\n",
-			i + 1, scores[i].name, scores[i].score,
-			scores[i].lines, scores[i].level);
+	} else {
+		for (unsigned i = 0; i < nscore; i++) {
+			tty_printf("  %u. %s  %u  L%u  lv%u\n",
+				i + 1, scores[i].name, scores[i].score,
+				scores[i].lines, scores[i].level);
+		}
 	}
 	tty_set_color(TTY_COL_DIM);
 	tty_puts("Lv 19-28 stay at 2G; lv 29 is 1G. That is NES, not a bug.\n");
