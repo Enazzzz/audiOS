@@ -158,9 +158,8 @@ def main() -> int:
             raise RuntimeError(f"help still lists cat as a file dump\n{text}")
 
         send(master, "tetris 0")
-        text = wait_for(master, proc, "NES tetris", 8.0)
-        if "LEVEL" not in text:
-            text += wait_for(master, proc, "LEVEL", 8.0)
+        # Same one-line serial banner as qemu_full: wait past LEVEL.
+        wait_for(master, proc, "Q quit", 8.0)
         os.write(master, b"q")
         wait_for(master, proc, PROMPT, 8.0)
 

@@ -265,9 +265,9 @@ def main() -> int:
 		checked.append("history Up")
 
 		send(master, "tetris 0")
-		text = wait_for(master, proc, "NES tetris", 8.0)
-		if "LEVEL" not in text:
-			text += wait_for(master, proc, "LEVEL", 8.0)
+		# One serial line: "NES tetris  LEVEL n  (Q quit)" then tty_clear.
+		# Wait for the last token so a mid-line read cannot miss LEVEL.
+		wait_for(master, proc, "Q quit", 8.0)
 		send_raw(master, b"q")
 		wait_for(master, proc, PROMPT, 8.0)
 		checked.append("tetris start/quit")
