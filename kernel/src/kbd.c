@@ -43,6 +43,8 @@ static int held_left;
 static int held_right;
 static int held_down;
 static int held_up;
+static int held_pgup;
+static int held_pgdn;
 
 static const char map_unshifted[128] = {
 	[0x02] = '1', [0x03] = '2', [0x04] = '3', [0x05] = '4', [0x06] = '5',
@@ -177,6 +179,8 @@ void kbd_init(void)
 	held_right = 0;
 	held_down = 0;
 	held_up = 0;
+	held_pgup = 0;
+	held_pgdn = 0;
 
 	if (kbd_absent()) {
 		goto out;
@@ -239,6 +243,10 @@ static void kbd_handle(uint8_t sc)
 			held_down = release ? 0 : 1;
 		} else if (code == 0x48) {
 			held_up = release ? 0 : 1;
+		} else if (code == 0x49) {
+			held_pgup = release ? 0 : 1;
+		} else if (code == 0x51) {
+			held_pgdn = release ? 0 : 1;
 		}
 		if (release) {
 			return;
@@ -338,5 +346,18 @@ int kbd_held(int key)
 	if (key == KBD_UP) {
 		return held_up;
 	}
+	if (key == KBD_PGUP) {
+		return held_pgup;
+	}
+	if (key == KBD_PGDN) {
+		return held_pgdn;
+	}
 	return 0;
+}
+
+void kbd_flush_queue(void)
+{
+	kbd_poll();
+	qhead = 0;
+	qtail = 0;
 }

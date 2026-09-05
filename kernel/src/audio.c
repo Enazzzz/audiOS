@@ -724,6 +724,25 @@ static void audio_set(int argc, char **argv)
 	audio_fail("unknown parameter (rate, buffer, format, channels, device)");
 }
 
+/** Print audio command list (`audio help`). */
+static void audio_help(void)
+{
+	tty_puts("audio commands\n");
+	tty_set_color(TTY_COL_DIM);
+	tty_puts("  audio              configuration and selected device\n");
+	tty_puts("  audio help         this list\n");
+	tty_puts("  audio devices      PCI output devices\n");
+	tty_puts("  audio info         codec / stream details\n");
+	tty_puts("  audio set          rate, buffer, format, channels, device\n");
+	tty_puts("  audio status       underruns and frames played\n");
+	tty_puts("  audio test         continuous 440 Hz tone until stop\n");
+	tty_puts("  tone               sine|square|saw|noise|silence [freq] [amp] [dur]\n");
+	tty_puts("  play <clip|file>   play a clip or PCM WAV (loop|n)\n");
+	tty_puts("  stop               halt playback\n");
+	tty_puts("  music              clip / DSP / seq / rec (music with no args for that list)\n");
+	tty_set_color(TTY_COL_FG);
+}
+
 void audio_cmd(int argc, char **argv)
 {
 	if (argc <= 1) {
@@ -731,7 +750,9 @@ void audio_cmd(int argc, char **argv)
 		return;
 	}
 	const char *sub = argv[1];
-	if (strcmp(sub, "devices") == 0) {
+	if (strcmp(sub, "help") == 0 || strcmp(sub, "?") == 0) {
+		audio_help();
+	} else if (strcmp(sub, "devices") == 0) {
 		audio_print_devices();
 	} else if (strcmp(sub, "info") == 0) {
 		audio_print_info();
@@ -759,7 +780,7 @@ void audio_cmd(int argc, char **argv)
 		tty_set_color(TTY_COL_FG);
 		tty_puts("continuous test — stop to end\n");
 	} else {
-		audio_fail("unknown audio command (devices, info, set, status, test)");
+		audio_fail("unknown audio command (help, devices, info, set, status, test)");
 	}
 }
 

@@ -1,5 +1,6 @@
 #include "tetris.h"
 #include "audio.h"
+#include "fs.h"
 #include "kbd.h"
 #include "klib.h"
 #include "pit.h"
@@ -15,6 +16,8 @@
 #define DAS_PERIOD	6
 #define CLEAR_FRAMES	20
 #define FRAME_MS	16u
+#define SCORE_MAX	8
+#define SCORE_PATH	"D:/tetris.scr"
 
 /* Nintendo Rotation System colours (VGA). */
 #define COL_BG		0x101014u
@@ -39,7 +42,8 @@ typedef enum {
 	ST_ARE,
 	ST_CLEAR,
 	ST_PAUSE,
-	ST_OVER
+	ST_OVER,
+	ST_NAME
 } game_state_t;
 
 /*
@@ -131,7 +135,21 @@ static int well_x;
 static int well_y;
 static int dirty;
 
-/** NTSC-ish gravity table (frames per row) from NES Tetris. */
+struct hiscore {
+	char name[4];
+	uint32_t score;
+	unsigned lines;
+	unsigned level;
+};
+
+static struct hiscore scores[SCORE_MAX];
+static unsigned nscore;
+static char name_in[4];
+static unsigned name_n;
+
+/** NTSC gravity table (frames per row) from NES Tetris.
+ * Levels 19–28 stay at 2G; 29 is 1G. That plateau is NES, not a bug.
+ */
 static unsigned grav_frames(unsigned lv)
 {
 	static const uint8_t low[10] = {48, 43, 38, 33, 28, 23, 18, 13, 8, 6};
@@ -153,7 +171,143 @@ static unsigned grav_frames(unsigned lv)
 	return low[lv];
 }
 
-/** First level-up line count (NES start-level rule). */
+/** Load D:/tetris.scr (name score lines level per line). */
+static void scores_load(void)
+{
+	nscore = 0;
+	char raw[512];
+	uint32_t n = 0;
+	if (!fs_read_file(SCORE_PATH, raw, sizeof(raw) - 1u, &n) || n == 0) {
+		return;
+	}
+	raw[n] = '\0';
+	char *p = raw;
+	while (*p && nscore < SCORE_MAX) {
+		while (*p == ' ' || *p == '\n' || *p == '\r' || *p == '\t') {
+			p++;
+		}
+		if (*p == '\0') {
+			break;
+		}
+		char nm[4];
+		unsigned k = 0;
+		while (*p && *p != ' ' && k < 3) {
+			nm[k++] = *p++;
+		}
+		nm[k] = '\0';
+		while (*p == ' ') {
+			p++;
+		}
+		uint32_t sc = 0;
+		unsigned ln = 0;
+		unsigned lv = 0;
+		while (*p >= '0' && *p <= '9') {
+			sc = sc * 10u + (unsigned)(*p - '0');
+			p++;
+		}
+		while (*p == ' ') {
+			p++;
+		}
+		while (*p >= '0' && *p <= '9') {
+			ln = ln * 10u + (unsigned)(*p - '0');
+			p++;
+		}
+		while (*p == ' ') {
+			p++;
+		}
+		while (*p >= '0' && *p <= '9') {
+			lv = lv * 10u + (unsigned)(*p - '0');
+			p++;
+		}
+		ksnprintf(scores[nscore].name, sizeof(scores[nscore].name), "%s", nm[0] ? nm : "---");
+		scores[nscore].score = sc;
+		scores[nscore].lines = ln;
+		scores[nscore].level = lv;
+		nscore++;
+		while (*p && *p != '\n') {
+			p++;
+		}
+	}
+}
+
+/** Write the table back to the data volume. */
+static void scores_save(void)
+{
+	char raw[512];
+	unsigned o = 0;
+	raw[0] = '\0';
+	for (unsigned i = 0; i < nscore; i++) {
+		char line[80];
+		ksnprintf(line, sizeof(line), "%s %u %u %u\n",
+			scores[i].name, scores[i].score, scores[i].lines, scores[i].level);
+		size_t L = strlen(line);
+		if (o + L + 1 >= sizeof(raw)) {
+			break;
+		}
+		memcpy(raw + o, line, L);
+		o += (unsigned)L;
+	}
+	(void)fs_write_file(SCORE_PATH, raw, o);
+}
+
+/** True if this run belongs on the board. */
+static int score_qualifies(void)
+{
+	if (score == 0) {
+		return 0;
+	}
+	if (nscore < SCORE_MAX) {
+		return 1;
+	}
+	return score > scores[nscore - 1].score;
+}
+
+/** Insert the current run under `name`. */
+static void score_insert(const char *name)
+{
+	unsigned i = nscore;
+	if (i > SCORE_MAX) {
+		i = SCORE_MAX;
+	}
+	while (i > 0 && score > scores[i - 1].score) {
+		if (i < SCORE_MAX) {
+			scores[i] = scores[i - 1];
+		}
+		i--;
+	}
+	if (i >= SCORE_MAX) {
+		return;
+	}
+	ksnprintf(scores[i].name, sizeof(scores[i].name), "%s", name);
+	scores[i].score = score;
+	scores[i].lines = lines;
+	scores[i].level = level;
+	if (nscore < SCORE_MAX) {
+		nscore++;
+	}
+	scores_save();
+}
+
+/** Print the table (shell `tetris scores`). */
+static void scores_print(void)
+{
+	scores_load();
+	tty_puts("NES tetris scores (D:/tetris.scr)\n");
+	if (nscore == 0) {
+		tty_puts("  (empty)\n");
+	} else {
+		for (unsigned i = 0; i < nscore; i++) {
+			tty_printf("  %u. %s  %u  L%u  lv%u\n",
+				i + 1, scores[i].name, scores[i].score,
+				scores[i].lines, scores[i].level);
+		}
+	}
+	tty_set_color(TTY_COL_DIM);
+	tty_puts("Lv 19-28 stay at 2G; lv 29 is 1G. That is NES, not a bug.\n");
+	tty_set_color(TTY_COL_FG);
+}
+
+/** NTSC-ish first level-up line count (NES start-level rule). */
 static unsigned first_goal(unsigned start)
 {
 	if (start < 10u) {
@@ -272,7 +426,9 @@ static void spawn_piece(void)
 	py = 0;
 	grav_left = grav_frames(level);
 	if (collides(cur, prot, px, py)) {
-		state = ST_OVER;
+		name_n = 0;
+		ksnprintf(name_in, sizeof(name_in), "AAA");
+		state = score_qualifies() ? ST_NAME : ST_OVER;
 	} else {
 		state = ST_PLAY;
 	}
@@ -447,22 +603,26 @@ static void put_str(unsigned col, unsigned row, const char *s, uint32_t rgb)
 	}
 }
 
-/** Unsigned decimal into the grid. */
-static void put_u32(unsigned col, unsigned row, uint32_t n, uint32_t rgb)
+/** Write `s` then pad with spaces so a shorter string cannot leave leftovers. */
+static void put_str_pad(unsigned col, unsigned row, const char *s, unsigned width, uint32_t rgb)
 {
-	char buf[12];
-	int i = 0;
-	if (n == 0) {
-		tty_put_xy(col, row, '0', rgb);
-		return;
+	unsigned i = 0;
+	while (s[i] != '\0' && i < width) {
+		tty_put_xy(col + i, row, s[i], rgb);
+		i++;
 	}
-	while (n > 0 && i < (int)sizeof(buf) - 1) {
-		buf[i++] = (char)('0' + (n % 10u));
-		n /= 10u;
+	while (i < width) {
+		tty_put_xy(col + i, row, ' ', COL_BG);
+		i++;
 	}
-	while (i > 0) {
-		tty_put_xy(col++, row, buf[--i], rgb);
-	}
+}
+
+/** Unsigned decimal into a fixed-width field (pads so digits do not ghost). */
+static void put_field(unsigned col, unsigned row, uint32_t n, unsigned width, uint32_t rgb)
+{
+	char tmp[16];
+	ksnprintf(tmp, sizeof(tmp), "%u", n);
+	put_str_pad(col, row, tmp, width, rgb);
 }
 
 /** Colour for a well cell id (0 empty, 1–7 locked kinds). */
@@ -486,11 +646,12 @@ static void paint(void)
 	put_str(0, 0, "NES tetris", TTY_COL_ACCENT);
 	put_str(12, 0, "  X/Up CW  Z CCW  arrows  Down soft  P pause  Q quit", COL_DIM);
 	put_str(0, 1, "LEVEL ", COL_HUD);
-	put_u32(6, 1, level, TTY_COL_ACCENT);
-	put_str(12, 1, "SCORE ", COL_HUD);
-	put_u32(18, 1, score, TTY_COL_ACCENT);
-	put_str(28, 1, "LINES ", COL_HUD);
-	put_u32(34, 1, lines, TTY_COL_ACCENT);
+	put_field(6, 1, level, 4, TTY_COL_ACCENT);
+	put_str(11, 1, "SCORE ", COL_HUD);
+	put_field(17, 1, score, 8, TTY_COL_ACCENT);
+	put_str(26, 1, "LINES ", COL_HUD);
+	put_field(32, 1, lines, 6, TTY_COL_ACCENT);
+	put_str_pad(0, 2, "19-28 stay 2G, 29 is 1G (NES)", 40, COL_DIM);
 
 	if (well_x < 1) {
 		well_x = 2;
@@ -541,31 +702,57 @@ static void paint(void)
 	}
 
 	put_str((unsigned)(well_x + WELL_W * 2 + 6), (unsigned)well_y, "NEXT", COL_HUD);
-	for (int y = 0; y < 4; y++) {
-		for (int x = 0; x < 4; x++) {
-			unsigned col = (unsigned)(well_x + WELL_W * 2 + 6 + x * 2);
-			unsigned row = (unsigned)(well_y + 2 + y);
-			tty_put_xy(col, row, ' ', COL_BG);
-			tty_put_xy(col + 1u, row, ' ', COL_BG);
-		}
-	}
 	{
-		int nr = 0;
+		int occ[4][4];
+		memset(occ, 0, sizeof(occ));
 		for (int i = 0; i < 4; i++) {
-			int bx = (int)nrs[nxt][nr][i][0];
-			int by = (int)nrs[nxt][nr][i][1];
-			unsigned col = (unsigned)(well_x + WELL_W * 2 + 6 + bx * 2);
-			unsigned row = (unsigned)(well_y + 2 + by);
-			tty_put_xy(col, row, '[', kind_rgb[nxt]);
-			tty_put_xy(col + 1u, row, ']', kind_rgb[nxt]);
+			int bx = (int)nrs[nxt][0][i][0];
+			int by = (int)nrs[nxt][0][i][1];
+			if (bx >= 0 && bx < 4 && by >= 0 && by < 4) {
+				occ[by][bx] = 1;
+			}
+		}
+		for (int y = 0; y < 4; y++) {
+			for (int x = 0; x < 4; x++) {
+				unsigned col = (unsigned)(well_x + WELL_W * 2 + 6 + x * 2);
+				unsigned row = (unsigned)(well_y + 2 + y);
+				if (occ[y][x]) {
+					tty_put_xy(col, row, '[', kind_rgb[nxt]);
+					tty_put_xy(col + 1u, row, ']', kind_rgb[nxt]);
+				} else {
+					tty_put_xy(col, row, ' ', COL_BG);
+					tty_put_xy(col + 1u, row, ' ', COL_BG);
+				}
+			}
 		}
 	}
 
 	if (state == ST_PAUSE) {
-		put_str((unsigned)well_x, (unsigned)(well_y + WELL_H / 2), "PAUSED", TTY_COL_AUDIO);
+		put_str_pad((unsigned)well_x, (unsigned)(well_y + WELL_H / 2), "PAUSED", 20, TTY_COL_AUDIO);
+	} else if (state == ST_OVER) {
+		put_str_pad((unsigned)well_x, (unsigned)(well_y + WELL_H / 2), "GAME OVER  Q quit", 20, TTY_COL_ERR);
+		put_str_pad((unsigned)well_x, (unsigned)(well_y + WELL_H / 2 + 1), "", 20, COL_BG);
+	} else if (state == ST_NAME) {
+		put_str_pad((unsigned)well_x, (unsigned)(well_y + WELL_H / 2), "HIGH SCORE  name:", 20, TTY_COL_AUDIO);
+		put_str_pad((unsigned)well_x, (unsigned)(well_y + WELL_H / 2 + 1), name_in, 4, TTY_COL_ACCENT);
+		put_str((unsigned)well_x + 4u, (unsigned)(well_y + WELL_H / 2 + 1), "  Enter save", COL_DIM);
+	} else {
+		put_str_pad((unsigned)well_x, (unsigned)(well_y + WELL_H / 2), "", 20, COL_BG);
+		put_str_pad((unsigned)well_x, (unsigned)(well_y + WELL_H / 2 + 1), "", 20, COL_BG);
 	}
-	if (state == ST_OVER) {
-		put_str((unsigned)well_x, (unsigned)(well_y + WELL_H / 2), "GAME OVER  Q quit", TTY_COL_ERR);
+	{
+		unsigned sc = (unsigned)(well_x + WELL_W * 2 + 6);
+		unsigned sr = (unsigned)well_y + 8u;
+		put_str(sc, sr, "SCORES", COL_HUD);
+		for (unsigned i = 0; i < 8; i++) {
+			char line[40];
+			if (i < nscore) {
+				ksnprintf(line, sizeof(line), "%s %u", scores[i].name, scores[i].score);
+			} else {
+				line[0] = '\0';
+			}
+			put_str_pad(sc, sr + 1 + i, line, 18, COL_DIM);
+		}
 	}
 	dirty = 0;
 }
@@ -619,6 +806,32 @@ static void feed_key(int c)
 		running = 0;
 		return;
 	}
+	if (state == ST_NAME) {
+		if (c == '\n' || c == '\r') {
+			if (name_in[0] == '\0') {
+				ksnprintf(name_in, sizeof(name_in), "AAA");
+			}
+			score_insert(name_in);
+			state = ST_OVER;
+			dirty = 1;
+			return;
+		}
+		if ((c == '\b' || c == 0x7F) && name_n > 0) {
+			name_n--;
+			name_in[name_n] = '\0';
+			dirty = 1;
+			return;
+		}
+		if (c >= 'a' && c <= 'z') {
+			c = c - 'a' + 'A';
+		}
+		if (c >= 'A' && c <= 'Z' && name_n < 3) {
+			name_in[name_n++] = (char)c;
+			name_in[name_n] = '\0';
+			dirty = 1;
+		}
+		return;
+	}
 	if (c == 'p' || c == 'P') {
 		if (state == ST_PAUSE) {
 			state = paused_from;
@@ -630,7 +843,7 @@ static void feed_key(int c)
 		}
 		return;
 	}
-	if (state == ST_PAUSE || state == ST_OVER) {
+	if (state == ST_PAUSE || state == ST_OVER || state == ST_NAME) {
 		return;
 	}
 	if (state != ST_PLAY) {
@@ -758,7 +971,12 @@ static void game_init(unsigned start)
 
 void tetris_cmd(int argc, char **argv)
 {
+	if (argc > 1 && (strcmp(argv[1], "scores") == 0 || strcmp(argv[1], "score") == 0)) {
+		scores_print();
+		return;
+	}
 	unsigned start = parse_level(argc, argv);
+	scores_load();
 	tty_clear();
 	game_init(start);
 	paint();
@@ -789,6 +1007,7 @@ void tetris_cmd(int argc, char **argv)
 				break;
 			case ST_PAUSE:
 			case ST_OVER:
+			case ST_NAME:
 				break;
 			}
 		}

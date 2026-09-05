@@ -28,6 +28,7 @@ static char draft[LINE_MAX];
 static int browsing;
 static int esc;	/* 0, 1 = ESC, 2 = CSI, 3 = SS3 (serial arrows) */
 static unsigned esc_num;
+static uint64_t scroll_hold_at;	/* PIT tick when hold-repeat may fire again */
 
 /** Trim leading/trailing whitespace in place. */
 static void trim_inplace(char *s)
@@ -85,6 +86,11 @@ static void shell_banner(void)
 	tty_set_color(TTY_COL_AUDIO);
 	tty_printf("%u kHz • %u-bit • %u channels\n",
 		AUDIOS_AUDIO_RATE / 1000u, AUDIOS_AUDIO_BITS, AUDIOS_AUDIO_CHANNELS);
+	if (tty_fb_width() && tty_fb_height()) {
+		tty_set_color(TTY_COL_DIM);
+		tty_printf("%ux%u framebuffer • %ux%u text\n",
+			tty_fb_width(), tty_fb_height(), tty_cols(), tty_rows());
+	}
 	tty_set_color(TTY_COL_FG);
 }
 
@@ -99,6 +105,7 @@ static void cmd_help(void)
 	tty_puts("  cpu               processor\n");
 	tty_puts("  mem               physical memory\n");
 	tty_puts("  audio             audio configuration\n");
+	tty_puts("  audio help        audio / tone / play commands\n");
 	tty_puts("  audio devices     list output devices\n");
 	tty_puts("  audio info        selected device details\n");
 	tty_puts("  audio set         change rate/buffer/format\n");
@@ -109,22 +116,26 @@ static void cmd_help(void)
 	tty_puts("  stop              halt playback\n");
 	tty_puts("  music             clip / DSP / seq / rec commands\n");
 	tty_puts("  script <file>     run commands from a text file\n");
-	tty_puts("  ls [path]         list directory (/os is the system volume)\n");
-	tty_puts("  edit <file>       text editor  (^O save, ^X quit)\n");
-	tty_puts("  tetris [level]    NES-rules falling blocks (Q quit)\n");
+	tty_puts("  ls [path]         list directory (C: system, D: data, /os = C:)\n");
+	tty_puts("  cd C: | D: | E:   switch volume (E: extra USB after mount)\n");
+	tty_puts("  edit <file>       text editor  (^O save, ^X quit, wrap)\n");
+	tty_puts("  tetris [level]    NES-rules falling blocks (Q quit, scores on D:)\n");
 	tty_puts("  cd [path]         change directory\n");
-	tty_puts("  pwd               print working directory\n");
+	tty_puts("  pwd               print working directory (C:/ D:/ E:/)\n");
 	tty_puts("  mkdir <dir>       create directory\n");
 	tty_puts("  rm <path>         delete file or empty directory\n");
 	tty_puts("  cp <src> <dst>    copy file\n");
 	tty_puts("  mv <src> <dst>    rename or move file\n");
-	tty_puts("  cat <file>        show file bytes\n");
+	tty_puts("  type <file>       show file bytes\n");
 	tty_puts("  touch <file>      create empty file\n");
 	tty_puts("  info <path>       file metadata\n");
 	tty_puts("  storage           capacity and free space\n");
-	tty_puts("  PgUp / PgDn       scroll the console\n");
-	tty_puts("  mount             mount status / retry\n");
+	tty_puts("  drives            C: D: E: and mount extra USB\n");
+	tty_puts("  update [kernel]   copy a new kernel onto C: (D: kept)\n");
+	tty_puts("  PgUp / PgDn       scroll one line (hold for continuous)\n");
+	tty_puts("  mount             mount status / scan extra USB\n");
 	tty_puts("  reboot            restart the machine\n");
+	tty_puts("  shutdown          power off (ACPI / QEMU)\n");
 	tty_puts("  Up / Down         previous / next command (PowerShell-style)\n");
 	tty_set_color(TTY_COL_FG);
 }
@@ -141,6 +152,8 @@ static void cmd_version(void)
 	tty_printf("board %s\n", AUDIOS_BOARD);
 	tty_printf("uptime %llu.%03llu s\n",
 		(unsigned long long)secs, (unsigned long long)millis);
+	tty_printf("framebuffer %ux%u  text %ux%u\n",
+		tty_fb_width(), tty_fb_height(), tty_cols(), tty_rows());
 	tty_set_color(TTY_COL_FG);
 }
 
@@ -219,6 +232,21 @@ static void hist_down(void)
 
 /** Dispatch a complete command line. Empty lines are ignored. */
 static void shell_dispatch(char *cmd);
+
+/**
+ * Easter egg. Classic 7-bit ASCII cat (ASCII Art Archive / asciiart.eu,
+ * “Cat by unknown”, 2014). Not listed in help; `type` dumps files.
+ */
+static void cmd_cat_art(void)
+{
+	tty_set_color(TTY_COL_ACCENT);
+	tty_puts("  /\\_/\\\n");
+	tty_puts(" ( o.o )\n");
+	tty_puts("  > ^ <\n");
+	tty_set_color(TTY_COL_DIM);
+	tty_puts(" (type <file> to dump a file)\n");
+	tty_set_color(TTY_COL_FG);
+}
 
 /** Run each non-comment line of a text file as a command. */
 static void cmd_script(const char *path)
@@ -317,14 +345,20 @@ static void shell_dispatch(char *cmd)
 		fs_cmd_cp(argc, argv);
 	} else if (strcmp(argv[0], "mv") == 0) {
 		fs_cmd_mv(argc, argv);
+	} else if (strcmp(argv[0], "type") == 0) {
+		fs_cmd_type(argc, argv);
 	} else if (strcmp(argv[0], "cat") == 0) {
-		fs_cmd_cat(argc, argv);
+		cmd_cat_art();
 	} else if (strcmp(argv[0], "touch") == 0) {
 		fs_cmd_touch(argc, argv);
 	} else if (strcmp(argv[0], "info") == 0) {
 		fs_cmd_info(argc, argv);
 	} else if (strcmp(argv[0], "storage") == 0) {
 		fs_cmd_storage();
+	} else if (strcmp(argv[0], "drives") == 0) {
+		fs_cmd_drives();
+	} else if (strcmp(argv[0], "update") == 0) {
+		fs_cmd_update(argc, argv);
 	} else if (strcmp(argv[0], "script") == 0) {
 		cmd_script(argc > 1 ? argv[1] : "");
 	} else if (strcmp(argv[0], "mount") == 0) {
@@ -335,6 +369,10 @@ static void shell_dispatch(char *cmd)
 		tetris_cmd(argc, argv);
 	} else if (strcmp(argv[0], "reboot") == 0) {
 		system_reboot();
+	} else if (strcmp(argv[0], "shutdown") == 0) {
+		system_shutdown();
+	} else if (fs_is_drive(argv[0]) || (argv[0][0] && argv[0][1] == ':')) {
+		fs_cmd_cd(argc, argv);
 	} else if (music_is_verb(argv[0])) {
 		music_cmd(argc, argv);
 	} else {
@@ -410,10 +448,12 @@ static void shell_feed(int c)
 	}
 	if (c == KBD_PGUP) {
 		tty_page_up();
+		scroll_hold_at = pit_ticks() + 90u;
 		return;
 	}
 	if (c == KBD_PGDN) {
 		tty_page_down();
+		scroll_hold_at = pit_ticks() + 90u;
 		return;
 	}
 	if (c == '\b' || c == 0x7F) {
@@ -441,6 +481,7 @@ void shell_run(void)
 	hist_pos = 0;
 	browsing = 0;
 	esc = 0;
+	scroll_hold_at = 0;
 	tty_set_idle(audio_service);
 	shell_banner();
 	shell_prompt();
@@ -453,6 +494,16 @@ void shell_run(void)
 		while ((c = serial_getc()) >= 0) {
 			shell_feed(c);
 			audio_service();
+		}
+		uint64_t now = pit_ticks();
+		if (now >= scroll_hold_at) {
+			if (kbd_held(KBD_PGUP)) {
+				tty_line_up();
+				scroll_hold_at = now + 90u;
+			} else if (kbd_held(KBD_PGDN)) {
+				tty_line_down();
+				scroll_hold_at = now + 90u;
+			}
 		}
 		audio_service();
 		tty_tick_cursor(pit_ticks());

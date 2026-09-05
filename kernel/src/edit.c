@@ -18,23 +18,68 @@ static uint32_t len;
 static uint32_t cur;
 static int dirty;
 static int running;
+static unsigned top_row;
 
-/** First byte of the line that contains `pos`. */
-static uint32_t line_start(uint32_t pos)
+/** Console width used for wrap (never 0). */
+static unsigned wrap_cols(void)
 {
-	while (pos > 0 && buf[pos - 1] != '\n') {
-		pos--;
-	}
-	return pos;
+	unsigned c = tty_cols();
+	return c ? c : 80u;
 }
 
-/** One past the last byte of the line (index of `\n` or `len`). */
-static uint32_t line_end(uint32_t pos)
+/** Map a buffer offset to a wrapped (row, col). */
+static void pos_to_vis(uint32_t pos, unsigned W, unsigned *row, unsigned *col)
 {
-	while (pos < len && buf[pos] != '\n') {
-		pos++;
+	unsigned r = 0;
+	unsigned c = 0;
+	uint32_t n = pos < len ? pos : len;
+	for (uint32_t i = 0; i < n; i++) {
+		if (buf[i] == '\n') {
+			r++;
+			c = 0;
+			continue;
+		}
+		c++;
+		if (c >= W) {
+			r++;
+			c = 0;
+		}
 	}
-	return pos;
+	*row = r;
+	*col = c;
+}
+
+/** Buffer offset of wrapped row `target_row`, column `target_col`. */
+static uint32_t vis_to_pos(unsigned target_row, unsigned target_col, unsigned W)
+{
+	unsigned r = 0;
+	unsigned c = 0;
+	uint32_t i = 0;
+	while (i < len) {
+		if (r == target_row) {
+			while (i < len && buf[i] != '\n' && c < target_col) {
+				i++;
+				c++;
+				if (c >= W) {
+					break;
+				}
+			}
+			return i;
+		}
+		if (buf[i] == '\n') {
+			r++;
+			c = 0;
+			i++;
+			continue;
+		}
+		c++;
+		i++;
+		if (c >= W) {
+			r++;
+			c = 0;
+		}
+	}
+	return len;
 }
 
 /** Insert `ch` at the cursor. */
@@ -74,91 +119,123 @@ static void save_file(void)
 	dirty = 0;
 }
 
-/** Paint the buffer into the console. */
+/**
+ * Paint with wrap. Does not tty_clear — dirty cells only, so typing
+ * does not flash the whole framebuffer.
+ */
 static void paint(void)
 {
-	unsigned cols = tty_cols();
+	unsigned cols = wrap_cols();
 	unsigned rows = tty_rows();
-	if (cols == 0) {
-		cols = 80;
-	}
 	if (rows < 3) {
 		rows = 3;
 	}
 	unsigned text_rows = rows - 2;
-	uint32_t ls = line_start(cur);
-	unsigned cur_line = 0;
-	for (uint32_t i = 0; i < ls; i++) {
-		if (buf[i] == '\n') {
-			cur_line++;
-		}
+	unsigned crow = 0;
+	unsigned ccol = 0;
+	pos_to_vis(cur, cols, &crow, &ccol);
+	if (crow < top_row) {
+		top_row = crow;
 	}
-	unsigned top = 0;
-	if (cur_line >= text_rows) {
-		top = cur_line - (text_rows - 1);
+	if (crow >= top_row + text_rows) {
+		top_row = crow - (text_rows - 1);
 	}
-	tty_clear();
-	tty_set_color(TTY_COL_ACCENT);
-	tty_printf("edit %s%s  ^O save  ^X quit\n", path, dirty ? "*" : "");
-	tty_set_color(TTY_COL_FG);
-	unsigned shown = 0;
-	unsigned line_i = 0;
+
+	char head[160];
+	ksnprintf(head, sizeof(head), "edit %s%s  ^O save  ^X quit", path, dirty ? "*" : "");
+	for (unsigned c = 0; c < cols; c++) {
+		char ch = (c < strlen(head)) ? head[c] : ' ';
+		tty_put_xy(c, 0, ch, TTY_COL_ACCENT);
+	}
+
+	unsigned row = 0;
+	unsigned col = 0;
 	uint32_t i = 0;
-	while (i < len && shown < text_rows) {
-		uint32_t e = line_end(i);
-		if (line_i >= top) {
-			uint32_t n = e - i;
-			if (n > cols) {
-				n = cols;
+	while (row < top_row + text_rows) {
+		int on_screen = (row >= top_row);
+		unsigned sr = 1 + (row - top_row);
+		if (i >= len) {
+			if (on_screen) {
+				for (unsigned c = 0; c < cols; c++) {
+					uint32_t rgb = (row == crow && c == ccol) ? TTY_COL_AUDIO : TTY_COL_FG;
+					char ch = (row == crow && c == ccol) ? '_' : ' ';
+					tty_put_xy(c, sr, ch, rgb);
+				}
 			}
-			for (uint32_t k = 0; k < n; k++) {
-				char ch = buf[i + k];
-				tty_putc((ch == '\t') ? ' ' : ch);
-			}
-			tty_putc('\n');
-			shown++;
+			row++;
+			continue;
 		}
-		i = (e < len && buf[e] == '\n') ? e + 1 : e;
-		line_i++;
-		if (e >= len) {
-			break;
+		/* Draw the wrapped row in one pass. Do not blank first —
+		 * that flashes every keystroke. Unchanged cells are skipped. */
+		col = 0;
+		while (i < len && buf[i] != '\n' && col < cols) {
+			char ch = buf[i];
+			if (ch == '\t') {
+				ch = ' ';
+			}
+			if (on_screen) {
+				int here = (i == cur);
+				tty_put_xy(col, sr, here ? (ch == ' ' ? '_' : ch) : ch,
+					here ? TTY_COL_AUDIO : TTY_COL_FG);
+			}
+			i++;
+			col++;
+		}
+		if (on_screen) {
+			if (i == cur && col < cols && (i >= len || buf[i] == '\n')) {
+				tty_put_xy(col, sr, '_', TTY_COL_AUDIO);
+				col++;
+			}
+			while (col < cols) {
+				tty_put_xy(col, sr, ' ', TTY_COL_FG);
+				col++;
+			}
+		}
+		if (i < len && buf[i] == '\n') {
+			i++;
+			row++;
+			continue;
+		}
+		if (col >= cols) {
+			row++;
+			continue;
+		}
+		row++;
+		if (i >= len) {
+			/* fill remaining screen rows */
+			continue;
 		}
 	}
-	tty_set_color(TTY_COL_DIM);
-	tty_printf("%u/%u bytes\n", cur, len);
-	tty_set_color(TTY_COL_FG);
+
+	char st[80];
+	ksnprintf(st, sizeof(st), "%u/%u bytes  wrap on", cur, len);
+	for (unsigned c = 0; c < cols; c++) {
+		char ch = (c < strlen(st)) ? st[c] : ' ';
+		tty_put_xy(c, rows - 1, ch, TTY_COL_DIM);
+	}
 }
 
-/** Move the cursor by `delta` lines, preserving column. */
+/** Move the cursor by `delta` wrapped rows, preserving column. */
 static void move_vert(int delta)
 {
-	uint32_t ls = line_start(cur);
-	uint32_t col = cur - ls;
-	if (delta < 0) {
-		if (ls == 0) {
-			cur = 0;
-			return;
-		}
-		uint32_t prev = line_start(ls - 1);
-		uint32_t pe = line_end(prev);
-		uint32_t w = pe - prev;
-		cur = prev + (col < w ? col : w);
-		return;
+	unsigned W = wrap_cols();
+	unsigned r = 0;
+	unsigned c = 0;
+	pos_to_vis(cur, W, &r, &c);
+	if (delta < 0 && r < (unsigned)(-delta)) {
+		r = 0;
+	} else {
+		r = (unsigned)((int)r + delta);
 	}
-	uint32_t e = line_end(cur);
-	if (e >= len) {
-		cur = len;
-		return;
-	}
-	uint32_t ns = e + 1;
-	uint32_t ne = line_end(ns);
-	uint32_t w = ne - ns;
-	cur = ns + (col < w ? col : w);
+	cur = vis_to_pos(r, c, W);
 }
 
 /** Handle one key. */
 static void feed(int c)
 {
+	unsigned W = wrap_cols();
+	unsigned r = 0;
+	unsigned col = 0;
 	if (c == 15) {	/* Ctrl-O */
 		save_file();
 		paint();
@@ -193,34 +270,24 @@ static void feed(int c)
 		return;
 	}
 	if (c == KBD_HOME) {
-		cur = line_start(cur);
+		pos_to_vis(cur, W, &r, &col);
+		cur = vis_to_pos(r, 0, W);
 		paint();
 		return;
 	}
 	if (c == KBD_END) {
-		cur = line_end(cur);
+		pos_to_vis(cur, W, &r, &col);
+		cur = vis_to_pos(r, W - 1u, W);
 		paint();
 		return;
 	}
 	if (c == KBD_PGUP) {
-		unsigned n = tty_rows() / 2u;
-		if (n == 0) {
-			n = 1;
-		}
-		while (n--) {
-			move_vert(-1);
-		}
+		move_vert(-1);
 		paint();
 		return;
 	}
 	if (c == KBD_PGDN) {
-		unsigned n = tty_rows() / 2u;
-		if (n == 0) {
-			n = 1;
-		}
-		while (n--) {
-			move_vert(1);
-		}
+		move_vert(1);
 		paint();
 		return;
 	}
@@ -244,7 +311,7 @@ static void feed(int c)
 void edit_cmd(int argc, char **argv)
 {
 	if (argc < 2) {
-		tty_puts("usage: edit <file>   (^O save, ^X quit)\n");
+		tty_puts("usage: edit <file>   (^O save, ^X quit, wrap on)\n");
 		return;
 	}
 	uint32_t iocap = 0;
@@ -258,6 +325,7 @@ void edit_cmd(int argc, char **argv)
 	len = 0;
 	cur = 0;
 	dirty = 0;
+	top_row = 0;
 	uint32_t n = 0;
 	if (fs_read_file(path, buf, cap - 1u, &n) && n > 0) {
 		len = n;
@@ -267,6 +335,9 @@ void edit_cmd(int argc, char **argv)
 	}
 	buf[len] = '\0';
 	running = 1;
+	kbd_flush_queue();
+	tty_clear();
+	tty_cursor_hide();
 	paint();
 	while (running) {
 		int c;

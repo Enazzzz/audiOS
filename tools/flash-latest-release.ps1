@@ -11,6 +11,10 @@
 
 	Raw disk access requires an elevated (Administrator) PowerShell session.
 
+	This ERASES the entire stick, including D:. After the first install, use
+	update-system.ps1 instead (writes C: only). This script refuses to flash a
+	stick that already has a data partition unless you pass -Full.
+
 	Uses the standalone balena CLI when present. The npm build of balena-cli runs
 	on the system Node, and Node below v22.20.0 fails raw physical-drive opens on
 	Windows with "EIO: i/o error" (nodejs/node#55623). The standalone package
@@ -43,9 +47,13 @@
 	Relaunch in an elevated window (single UAC prompt) rather than failing when
 	the current session is not Administrator.
 
+.PARAMETER Full
+	Allow erasing a stick that already has D:. First install does not need this.
+	Day-to-day kernel bumps: .\tools\update-system.ps1 -Elevate
+
 .EXAMPLE
 	.\tools\flash-latest-release.ps1 -Elevate
-	Flashes the latest release to whatever disk currently holds D:.
+	First-install flash of the latest release to whatever disk currently holds D:.
 
 .EXAMPLE
 	.\tools\flash-latest-release.ps1 -DiskNumber 1 -VerifyOnly -Elevate
@@ -65,7 +73,8 @@ param(
 	[switch]$VerifyOnly,
 	[switch]$SkipVerify,
 	[switch]$Yes,
-	[switch]$Elevate
+	[switch]$Elevate,
+	[switch]$Full
 )
 
 $ErrorActionPreference = 'Stop'
@@ -326,6 +335,7 @@ if (-not (Test-Elevated)) {
 	if ($Yes) { $argv += '-Yes' }
 	if ($VerifyOnly) { $argv += '-VerifyOnly' }
 	if ($SkipVerify) { $argv += '-SkipVerify' }
+	if ($Full) { $argv += '-Full' }
 
 	Write-Host 'Relaunching elevated (accept the UAC prompt)...'
 	Start-Process -FilePath 'powershell.exe' -ArgumentList $argv -Verb RunAs
@@ -344,7 +354,34 @@ if ($VerifyOnly) {
 	exit 1
 }
 
-Write-Host 'This ERASES the entire disk.' -ForegroundColor Yellow
+# A stick that already booted audiOS has leftover data in MBR slot 2.
+# Writing the whole 64 MiB image drops that partition. Refuse unless -Full.
+if (-not $VerifyOnly) {
+	$mbrStream = New-Object IO.FileStream(
+		$target, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::ReadWrite)
+	try {
+		$mbr = New-Object byte[] 512
+		[void]$mbrStream.Read($mbr, 0, 512)
+	} finally {
+		$mbrStream.Dispose()
+	}
+	if ($mbr[510] -eq 0x55 -and $mbr[511] -eq 0xAA) {
+		$dataLba = [BitConverter]::ToUInt32($mbr, 446 + 16 + 8)
+		$dataSec = [BitConverter]::ToUInt32($mbr, 446 + 16 + 12)
+		if ($dataLba -ne 0 -and $dataSec -ne 0 -and -not $Full) {
+			throw @"
+Disk $($disk.Number) already has a data partition (D: at LBA $dataLba).
+A full flash would wipe it. For kernel updates run:
+
+  .\tools\update-system.ps1 -DiskNumber $($disk.Number) -Elevate
+
+Or pass -Full if you really want to erase D:.
+"@
+		}
+	}
+}
+
+Write-Host 'This ERASES the entire disk (including D: if it exists).' -ForegroundColor Yellow
 
 if (-not $Yes) {
 	if ((Read-Host "Type the disk number ($($disk.Number)) to confirm") -ne "$($disk.Number)") {

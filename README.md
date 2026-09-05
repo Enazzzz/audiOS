@@ -1,12 +1,13 @@
 # audiOS
 
 audiOS is a lightweight, command-line-first operating system for digital
-audio. **v0.1.8** is built around one machine: the **ASRock 960GM-GS3 FX**
+audio. **v0.1.9** is built around one machine: the **ASRock 960GM-GS3 FX**
 (AMD FX, 760G/SB710, Realtek ALC662).
 
 ```
-audiOS 0.1.8
+audiOS 0.1.9
 96 kHz • 24-bit • 2 channels
+1280x1024 framebuffer • 160x64 text
 audiOS>
 ```
 
@@ -16,29 +17,43 @@ bumps **minor**. A huge turning point becomes **1.0.0** (v1.00). The old
 `0.0.2`–`0.0.6` trail and the first-kernel `0.1` tag are history; this
 line started as a naming reset at `0.1.0`, not a rollback.
 
-## What 0.1.8 does
+## What 0.1.9 does
 
 - Boots on that AM3+ board (legacy BIOS, VGA or GTX 1050). **PS/2 keyboard
   only.** `.img` boot takes EHCI for the stick, which kills BIOS USB-legacy,
   so a USB keyboard (including a PS/2-to-USB dongle) will not type. Plug a
   real PS/2 keyboard into the PS/2 port.
 - Plays through the onboard HD Audio jack (SB710 + ALC662)
-- Persistent **FAT32** on the boot USB (EHCI mass storage). Partition 1 is
-  the 64 MiB system volume (Limine, kernel, stock `audio/`). Leftover space
-  on the stick becomes a second FAT32 **data** volume on first mount. The
-  shell starts on the data volume; system files are under `/os`. USB I/O
-  is one 512-byte sector at a time so 4 KiB data-volume clusters work on
-  the SB710 (creates outside `/os` were failing with `ok`). The boot
-  partition is not reformatted. A 0.0.6 stick cannot be split in place —
-  flash a new `audios.img`.
-- `edit <file>` is a small text editor (`^O` save, `^X` quit). PgUp / PgDn
-  scroll the console.
-- `tetris [level]` is a text-mode falling-block game using **NES Tetris
-  rules** (Nintendo Rotation System, no wall kick, no lock delay, no hard
-  drop, NES gravity / DAS / scoring). It is original kernel code, not a
-  port of vitetris or other clones. Tetris is a trademark of Tetris
-  Holding; this is a fan recreation of the 1989 NES mechanics. PS/2
-  arrows hold DAS; Q quits, P pauses, X/Up rotate, Z the other way.
+- Persistent **FAT32** on the boot USB (EHCI mass storage). **C:** is the
+  64 MiB system volume (Limine, kernel, stock `audio/`). **D:** is the
+  leftover data volume (created on first mount, never reformatted when you
+  `update`). **E:** is a second USB stick if `mount` finds one. `/os` is
+  still C:. `C:/README.TXT` says everything on C: is temporary until the
+  next update — keep lasting files on D:. `cd C:` / `cd D:` / `C:` switch
+  volumes. USB I/O is one
+  512-byte sector at a time so 4 KiB data-volume clusters work on the SB710.
+- **Updates without wiping D:** do not raw-flash a new `audios.img` over
+  the whole stick (that rewrites the MBR and drops partition 2). Either
+  `update E:/boot/kernel` / `update D:/boot/kernel` (copies onto C: only)
+  or on a host write partition 1 in place:
+  Windows `.\tools\update-system.ps1 -Elevate` (replaces
+  `flash-latest-release.ps1` for day-to-day bumps), or
+  `python3 tools/update_system.py /dev/sdX audios.img`. First install is
+  still a full image flash (`flash-latest-release.ps1 -Full`).
+- `edit <file>` wraps long lines and redraws dirty cells only (`^O` save,
+  `^X` quit). PgUp / PgDn on the console move **one line**; hold for a
+  slow continuous scroll. Full-screen clears are no longer used for every
+  editor key.
+- `tetris [level]` is NES-rules falling blocks. **Level 19–28 staying at
+  2G (then 1G at 29) is NES**, not a cap we invented. High scores live on
+  `D:/tetris.scr` (`tetris scores`).
+- `audio help` lists audio / tone / play. `shutdown` tries ACPI S5 / QEMU
+  power-off. `type <file>` dumps a file. `cat` is an ASCII cat (not in
+  help).
+- Limine is asked for `1920x1080x32`; it picks the closest mode the GPU
+  or VBIOS actually has. The kernel sizes the text grid from that
+  framebuffer (onboard VGA or a GTX 1050). We cannot reprogram the GPU
+  ourselves — if you want HDMI, set the BIOS to the 1050, not the IGP.
 - Named **clips** in RAM: load/save WAV, slice, join, mix, reverse, gain,
   filters, delay, pitch/stretch (integer resample), a non-grid sequencer
 - `play clip` or `play file.wav` (`loop` until `stop`)
@@ -61,9 +76,9 @@ Plug speakers or headphones into the **green rear jack**.
 
 ## Commands
 
-`help` `clear` `version` `cpu` `mem` `reboot`
+`help` `clear` `version` `cpu` `mem` `reboot` `shutdown`
 
-`audio` `audio devices` `audio info` `audio set` `audio status` `audio test`
+`audio` `audio help` `audio devices` `audio info` `audio set` `audio status` `audio test`
 
 `tone sine|square|saw|noise|silence [freq] [amp] [duration]`
 
@@ -76,10 +91,13 @@ Plug speakers or headphones into the **green rear jack**.
 `distort` `noise` `seed` `lpf` `hpf` `bpf` `delay` `pan` `vary` `proc`
 `seq` `rec` `drop` `script`
 
-`ls` `cd` `pwd` `mkdir` `rm` `cp` `mv` `cat` `touch` `info` `storage` `mount`
-`edit` `tetris`
+`ls` `cd` `pwd` `mkdir` `rm` `cp` `mv` `type` `touch` `info` `storage` `mount`
+`drives` `update` `edit` `tetris`
 
-Up / Down: previous / next command. PgUp / PgDn: scroll the console.
+`cd C:` `cd D:` `cd E:` — system / data / extra USB. `/os` is C:.
+
+Up / Down: previous / next command. PgUp / PgDn: one line of scrollback
+(hold for continuous). `type` dumps a file. `tetris scores` shows the board.
 
 `pitch` resamples (length follows pitch) unless you add `keep`.
 `stretch` changes length. DSP is integer/fixed-point (no FPU on this kernel).
@@ -111,17 +129,25 @@ fundamental, square has odd harmonics, saw has a harmonic series, noise
 is not a tone, silence is quiet, `play test.wav` stays 440 Hz, L=R, no
 clipping. That is QEMU's HDA capture, not the ASRock analog jack.
 
-For **persistent files**, flash **`audios.img`** as a raw disk: Balena
-Etcher, Rufus **DD image mode**, or `dd`. Etcher is fine; a Limine
-**Stage 3 file not found** panic was a FAT geometry bug in the image
-(too few clusters, so Limine treated the volume as FAT16), not the
-flasher. Rebuild `audios.img` and write it again.
+For **persistent files**, first install is a full raw **`audios.img`**:
+`.\tools\flash-latest-release.ps1 -Elevate`, Balena Etcher, Rufus **DD
+image mode**, or `dd`. Etcher is fine; a Limine **Stage 3 file not
+found** panic was a FAT geometry bug in the image (too few clusters, so
+Limine treated the volume as FAT16), not the flasher.
 
-That image is MBR + two FAT32 partitions after first boot: system (the
-64 MiB image) and data (whatever was left on the stick). `mkdir` and
-`save` land on the data volume; `/os` is the system tree. Do not flash
-`audios.iso` on this board — AMI legacy BIOS treats USB as a hard disk,
-and Limine then cannot see an ISO9660 stage 3.
+That image is MBR + two FAT32 partitions after first boot: **C:** system
+(the 64 MiB image) and **D:** data. Later kernel bumps — **do not
+full-flash again**. On Windows:
+
+```
+.\tools\update-system.ps1 -Elevate
+```
+
+That downloads the latest release and writes C: only. `flash-latest-release.ps1`
+now refuses a stick that already has D: unless you pass `-Full`. Linux:
+`python3 tools/update_system.py /dev/sdX audios.img`. On the board:
+`update`. Do not flash `audios.iso` on this machine — AMI legacy BIOS
+treats USB as a hard disk, and Limine then cannot see an ISO9660 stage 3.
 
 On the Asrock: USB in a rear 2.0 port, PS/2 keyboard, VGA monitor,
 **F11** boot menu.

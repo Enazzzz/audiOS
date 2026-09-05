@@ -150,6 +150,10 @@ def main() -> int:
             raise RuntimeError(f"help missing edit\n{text}")
         if "tetris" not in text:
             raise RuntimeError(f"help missing tetris\n{text}")
+        if "type" not in text or "shutdown" not in text:
+            raise RuntimeError(f"help missing type/shutdown\n{text}")
+        if "  cat " in text.lower() or "cat <file>" in text.lower():
+            raise RuntimeError(f"help still lists cat as a file dump\n{text}")
 
         send(master, "tetris 0")
         text = wait_for(master, proc, "NES tetris", 8.0)
@@ -245,7 +249,7 @@ def main() -> int:
         wait_for(master, proc, PROMPT, 5.0)
         send(master, "pwd")
         text = wait_for(master, proc, PROMPT, 5.0)
-        if "/os/audio" not in text.lower():
+        if "c:/audio" not in text.lower():
             raise RuntimeError(f"pwd/cd /os/audio failed\n{text}")
 
         send(master, "ls")
@@ -257,8 +261,28 @@ def main() -> int:
         wait_for(master, proc, PROMPT, 5.0)
         send(master, "pwd")
         text = wait_for(master, proc, PROMPT, 5.0)
+        if "d:/" not in text.lower():
+            raise RuntimeError(f"cd / did not return to D:/\n{text}")
         if "/os" in text.lower() or "/audio" in text.lower():
             raise RuntimeError(f"cd / did not return to the data volume\n{text}")
+
+        send(master, "cd C:")
+        wait_for(master, proc, PROMPT, 5.0)
+        send(master, "pwd")
+        text = wait_for(master, proc, PROMPT, 5.0)
+        if "c:/audio" not in text.lower():
+            raise RuntimeError(f"cd C: did not restore C: cwd\n{text}")
+        send(master, "cd D:")
+        wait_for(master, proc, PROMPT, 5.0)
+        send(master, "pwd")
+        text = wait_for(master, proc, PROMPT, 5.0)
+        if "d:/" not in text.lower():
+            raise RuntimeError(f"cd D: failed\n{text}")
+
+        send(master, "cat")
+        text = wait_for(master, proc, PROMPT, 5.0)
+        if "o.o" not in text.lower() or "^" not in text:
+            raise RuntimeError(f"cat easter egg missing ASCII cat\n{text}")
 
         send(master, "mkdir notes")
         text = wait_for(master, proc, PROMPT, 8.0)
@@ -307,7 +331,7 @@ def main() -> int:
             raise RuntimeError(f"storage failed\n{text}")
         if "system" not in text.lower() or "data" not in text.lower():
             raise RuntimeError(f"storage did not list both partitions\n{text}")
-        tot = re.search(r"data total:\s+(\d+)", text)
+        tot = re.search(r"\(data\).*?total:\s+(\d+)", text, re.S)
         if tot is None or int(tot.group(1)) < 20_000_000:
             raise RuntimeError(f"data partition did not take leftover USB space\n{text}")
 
