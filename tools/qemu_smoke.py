@@ -141,6 +141,8 @@ def main() -> int:
             raise RuntimeError(f"banner missing (want {banner!r})\n{text}")
         if "mounted FAT32" not in text and "USB MSC" not in text:
             raise RuntimeError(f"filesystem did not mount\n{text}")
+        if "leftover FAT32" not in text and "mounted FAT32 data" not in text:
+            raise RuntimeError(f"D: leftover FAT32 was not mounted\n{text}")
 
         send(master, "help")
         text = wait_for(master, proc, PROMPT, 5.0)
@@ -392,6 +394,21 @@ def main() -> int:
         text = wait_for(master, proc, PROMPT, 8.0)
         if "render" not in text.lower():
             raise RuntimeError(f"seq render failed\n{text}")
+
+        send(master, "seq bpm 120")
+        text = wait_for(master, proc, PROMPT, 5.0)
+        if "seq bpm 120" not in text.lower():
+            raise RuntimeError(f"seq bpm failed\n{text}")
+
+        send(master, "use b")
+        text = wait_for(master, proc, PROMPT, 5.0)
+        if "current clip" not in text.lower():
+            raise RuntimeError(f"use current clip failed\n{text}")
+
+        send(master, "help vol")
+        text = wait_for(master, proc, PROMPT, 5.0)
+        if "volume" not in text.lower():
+            raise RuntimeError(f"help vol failed\n{text}")
 
         send(master, "sample b 0")
         text = wait_for(master, proc, PROMPT, 5.0)

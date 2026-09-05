@@ -425,14 +425,25 @@ static void msc_recover(void)
 /** BOT SCSI with a few retries — QEMU EHCI on GitHub runners drops a packet now and then. */
 static int scsi_retry(uint8_t *cdb, uint8_t cdblen, int in, void *data, uint32_t len)
 {
-	for (int t = 0; t < 4; t++) {
+	for (int t = 0; t < 8; t++) {
 		if (scsi(cdb, cdblen, in, data, len) == 0) {
 			return 0;
 		}
 		msc_recover();
-		usb_wait_ms(10u << (unsigned)t);
+		usb_wait_ms(10u << (unsigned)((t < 4) ? t : 4));
 	}
 	return -1;
+}
+
+/** Recover the boot MSC unit after a wedge (storage-stops-working). */
+void usb_msc_kick(void)
+{
+	if (nunits == 0 || !units[0].ready) {
+		return;
+	}
+	msc_load(0);
+	msc_recover();
+	msc_store(0);
 }
 
 static int msc_read_lba(uint64_t lba, uint32_t count, void *buf)

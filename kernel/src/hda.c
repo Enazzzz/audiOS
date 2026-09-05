@@ -88,12 +88,19 @@
 #define WCAP_CONN_LIST		(1u << 8)
 
 #define WIDGET_DAC		0
+#define WIDGET_ADC		1
 #define WIDGET_MIXER		2
 #define WIDGET_PIN		4
 
 #define PIN_DEV_LINE_OUT	0
 #define PIN_DEV_SPEAKER		1
 #define PIN_DEV_HP		2
+#define PIN_DEV_LINE_IN		8
+#define PIN_DEV_MIC		0xA
+
+#define HDA_STREAM_TAG_IN	2
+#define HDA_CAP_PERIODS		16
+#define HDA_CAP_FRAMES		64
 
 #define REALTEK_ALC662		0x10EC0662u
 #define AMD_SB710_HDA_VEN	0x1002
@@ -117,6 +124,27 @@ static uint8_t cad;
 static uint8_t nid_afg;
 static uint8_t nid_dac;
 static uint8_t nid_pin;
+static uint8_t nid_adc;
+static uint8_t nid_mic;
+static uint8_t nid_line;
+static unsigned out_vol = 80;
+static unsigned in_gain = 80;
+static uint32_t cap_off;
+static struct hda_bdl *cap_bdl;
+static uint32_t cap_bdl_phys;
+static uint8_t *cap_pcm;
+static uint32_t cap_pcm_phys;
+static uint32_t cap_period_bytes;
+static uint8_t cap_next;
+static int cap_running;
+static unsigned peak_in;
+static int16_t *cap_dst;
+static uint32_t cap_dst_frames;
+static uint32_t cap_dst_index;
+static int cap_sel_mic = 1;
+static uint8_t w_start;
+static uint8_t w_count;
+static void hda_cap_begin(void);
 static uint32_t codec_vid;
 static uint32_t *corb;
 static uint32_t corb_phys;
@@ -306,6 +334,38 @@ static void unmute(uint8_t node, int output)
 	setv(node, VERB_SET_AMP, payload);
 }
 
+/** Output amp 0..0 dB scaled by percent. */
+static void set_out_amp(uint8_t node, unsigned pct)
+{
+	uint32_t wcap = getp(node, PARAM_WIDGET_CAPS);
+	if (wcap == 0xFFFFFFFFu || (wcap & WCAP_OUT_AMP) == 0) {
+		return;
+	}
+	if (pct > 100u) {
+		pct = 100u;
+	}
+	uint32_t cap = getp(node, PARAM_AMP_OUT_CAP);
+	uint32_t offset = (cap == 0xFFFFFFFFu) ? 0 : (cap & 0x7Fu);
+	uint32_t g = offset * pct / 100u;
+	setv(node, VERB_SET_AMP, 0xB000u | g);
+}
+
+/** Input amp scaled by percent (mic / line / ADC). */
+static void set_in_amp(uint8_t node, unsigned pct)
+{
+	uint32_t wcap = getp(node, PARAM_WIDGET_CAPS);
+	if (wcap == 0xFFFFFFFFu || (wcap & WCAP_IN_AMP) == 0) {
+		return;
+	}
+	if (pct > 100u) {
+		pct = 100u;
+	}
+	uint32_t cap = getp(node, PARAM_AMP_IN_CAP);
+	uint32_t offset = (cap == 0xFFFFFFFFu) ? 0 : (cap & 0x7Fu);
+	uint32_t g = offset * pct / 100u;
+	setv(node, VERB_SET_AMP, 0x7000u | g);
+}
+
 /** Connection-list entry `idx` of `node`. */
 static uint8_t conn_at(uint8_t node, unsigned idx, uint32_t lenp)
 {
@@ -426,6 +486,145 @@ static void enable_pin(uint8_t node, int headphone)
 	}
 }
 
+/** Score a pin for analog capture (mic / line in). */
+static int pin_in_score(uint8_t node, uint32_t cfg, uint32_t vid)
+{
+	unsigned conn = (cfg >> 30) & 3u;
+	unsigned dev = (cfg >> 20) & 0xFu;
+	if (conn == 1) {
+		return -1;
+	}
+	int s = 0;
+	if (vid == REALTEK_ALC662 && node == 0x18) {
+		s += 80;
+	}
+	if (vid == REALTEK_ALC662 && node == 0x1A) {
+		s += 70;
+	}
+	if (dev == PIN_DEV_MIC) {
+		s += 40;
+	} else if (dev == PIN_DEV_LINE_IN) {
+		s += 30;
+	} else {
+		return -1;
+	}
+	return s;
+}
+
+/**
+ * Find an ADC that can see `pin`, optionally through one mixer, and
+ * select that connection.
+ */
+static uint8_t find_adc(uint8_t pin, uint8_t start, uint8_t nnodes)
+{
+	for (unsigned i = 0; i < nnodes; i++) {
+		uint8_t node = (uint8_t)(start + i);
+		uint32_t wcap = getp(node, PARAM_WIDGET_CAPS);
+		if (wcap == 0xFFFFFFFFu || widget_type(wcap) != WIDGET_ADC) {
+			continue;
+		}
+		uint32_t lenp = getp(node, PARAM_CONN_LIST_LEN);
+		unsigned nconn = (lenp == 0xFFFFFFFFu) ? 0 : (lenp & 0x7Fu);
+		for (unsigned k = 0; k < nconn && k < 16; k++) {
+			uint8_t c = conn_at(node, k, lenp);
+			if (c == 0 || c < start || c >= start + nnodes) {
+				continue;
+			}
+			if (c == pin) {
+				setv(node, 0x701, k);
+				return node;
+			}
+			uint32_t cc = getp(c, PARAM_WIDGET_CAPS);
+			if (cc == 0xFFFFFFFFu || widget_type(cc) != WIDGET_MIXER) {
+				continue;
+			}
+			uint32_t ml = getp(c, PARAM_CONN_LIST_LEN);
+			unsigned mn = (ml == 0xFFFFFFFFu) ? 0 : (ml & 0x7Fu);
+			for (unsigned m = 0; m < mn && m < 16; m++) {
+				if (conn_at(c, m, ml) == pin) {
+					setv(c, 0x701, m);
+					setv(node, 0x701, k);
+					unmute(c, 0);
+					unmute(c, 1);
+					return node;
+				}
+			}
+		}
+	}
+	return 0;
+}
+
+/** Enable an analog input pin (VREF 50% on mics). */
+static void enable_in_pin(uint8_t node, int mic)
+{
+	setv(node, VERB_SET_PIN_CTRL, mic ? 0x24u : 0x20u);
+	set_in_amp(node, in_gain);
+	unmute(node, 0);
+}
+
+/** Bind mic / line-in pins and an ADC on this AFG. */
+static void bind_inputs(uint8_t afg, uint8_t start, uint8_t nnodes)
+{
+	int best_mic = -1;
+	int best_line = -1;
+	uint8_t mic = 0;
+	uint8_t line = 0;
+	(void)afg;
+	for (unsigned i = 0; i < nnodes; i++) {
+		uint8_t node = (uint8_t)(start + i);
+		uint32_t wcap = getp(node, PARAM_WIDGET_CAPS);
+		if (wcap == 0xFFFFFFFFu || widget_type(wcap) != WIDGET_PIN) {
+			continue;
+		}
+		uint32_t cfg = getv(node, VERB_GET_CONFIG, 0);
+		if (cfg == 0xFFFFFFFFu) {
+			continue;
+		}
+		int s = pin_in_score(node, cfg, codec_vid);
+		if (s < 0) {
+			continue;
+		}
+		unsigned dev = (cfg >> 20) & 0xFu;
+		if (dev == PIN_DEV_MIC && s > best_mic) {
+			best_mic = s;
+			mic = node;
+		} else if (dev == PIN_DEV_LINE_IN && s > best_line) {
+			best_line = s;
+			line = node;
+		} else if (mic == 0 && s > best_mic) {
+			best_mic = s;
+			mic = node;
+		}
+	}
+	if (codec_vid == REALTEK_ALC662) {
+		if (mic == 0) {
+			mic = 0x18;
+		}
+		if (line == 0) {
+			line = 0x1A;
+		}
+	}
+	nid_mic = mic;
+	nid_line = line;
+	w_start = start;
+	w_count = nnodes;
+	uint8_t pin = mic ? mic : line;
+	nid_adc = pin ? find_adc(pin, start, nnodes) : 0;
+	if (nid_adc == 0 && codec_vid == REALTEK_ALC662) {
+		nid_adc = 0x08;
+	}
+	if (nid_adc) {
+		setv(nid_adc, VERB_SET_POWER, 0x00);
+		set_in_amp(nid_adc, in_gain);
+	}
+	if (mic) {
+		enable_in_pin(mic, 1);
+	}
+	if (line) {
+		enable_in_pin(line, 0);
+	}
+}
+
 /** Pick the best analog output pin and its DAC on this AFG. */
 static int bind_path(uint8_t afg)
 {
@@ -478,6 +677,8 @@ static int bind_path(uint8_t afg)
 	enable_pin(best_pin, dev == PIN_DEV_HP);
 	setv(best_dac, VERB_SET_POWER, 0x00);
 	unmute(best_dac, 1);
+	set_out_amp(best_dac, out_vol);
+	bind_inputs(afg, start, nnodes);
 	return 1;
 }
 
@@ -675,11 +876,14 @@ bool hda_init(void)
 	uint16_t gcap = mmr16(HDA_GCAP);
 	unsigned iss = (gcap >> 8) & 0xFu;
 	sd_off = 0x80u + iss * 0x20u;
+	cap_off = (iss > 0) ? 0x80u : 0;
 
 	corb = phys_alloc(HDA_CORB_ENTRIES * 4u, &corb_phys);
 	rirb = phys_alloc(HDA_CORB_ENTRIES * 8u, &rirb_phys);
 	bdl = phys_alloc(sizeof(struct hda_bdl) * HDA_PERIODS, &bdl_phys);
 	pcm = phys_alloc(HDA_PERIODS * 256u * 4u, &pcm_phys);
+	cap_bdl = phys_alloc(sizeof(struct hda_bdl) * HDA_CAP_PERIODS, &cap_bdl_phys);
+	cap_pcm = phys_alloc(HDA_CAP_PERIODS * HDA_CAP_FRAMES * 4u, &cap_pcm_phys);
 	if (corb == NULL || rirb == NULL || bdl == NULL || pcm == NULL) {
 		tty_printf("hda: DMA alloc failed\n");
 		return false;
@@ -713,6 +917,9 @@ bool hda_init(void)
 	bound_index = found;
 	hw_rate = 48000;
 	present = 1;
+	if (nid_adc && cap_off && cap_bdl && cap_pcm) {
+		hda_cap_begin();
+	}
 	return true;
 }
 
@@ -816,6 +1023,7 @@ bool hda_start(uint32_t frames, void (*fill)(int16_t *dst, uint32_t frames))
 	setv(nid_dac, VERB_SET_CONV_FMT, HDA_FMT_48K_S16_2CH);
 	setv(nid_dac, VERB_SET_STREAM_CHAN, (HDA_STREAM_TAG << 4));
 	unmute(nid_dac, 1);
+	set_out_amp(nid_dac, out_vol);
 	unmute(nid_pin, 1);
 
 	/*
@@ -887,4 +1095,201 @@ unsigned hda_service(void (*fill)(int16_t *dst, uint32_t frames))
 		sd_kick();
 	}
 	return filled;
+}
+
+static int sd_reset_at(uint32_t off)
+{
+	mmw8(off + SD_CTL, 0);
+	hda_delay(20);
+	mmw8(off + SD_CTL, SD_CTL_SRST);
+	for (unsigned i = 0; i < 4000; i++) {
+		if (mmr8(off + SD_CTL) & SD_CTL_SRST) {
+			break;
+		}
+		hda_delay(1);
+	}
+	mmw8(off + SD_CTL, 0);
+	for (unsigned i = 0; i < 4000; i++) {
+		if ((mmr8(off + SD_CTL) & SD_CTL_SRST) == 0) {
+			return 1;
+		}
+		hda_delay(1);
+	}
+	return 0;
+}
+
+/** Start input DMA for meters and analog rec. */
+static void hda_cap_begin(void)
+{
+	if (!present || !nid_adc || !cap_off || cap_bdl == NULL || cap_pcm == NULL) {
+		return;
+	}
+	cap_period_bytes = HDA_CAP_FRAMES * 4u;
+	if (!sd_reset_at(cap_off)) {
+		return;
+	}
+	memset(cap_pcm, 0, HDA_CAP_PERIODS * cap_period_bytes);
+	for (unsigned i = 0; i < HDA_CAP_PERIODS; i++) {
+		cap_bdl[i].addr = (uint64_t)cap_pcm_phys + (uint64_t)i * cap_period_bytes;
+		cap_bdl[i].len = cap_period_bytes;
+		cap_bdl[i].ioc = 0;
+	}
+	dma_flush(cap_bdl, sizeof(struct hda_bdl) * HDA_CAP_PERIODS);
+	mmw32(cap_off + SD_CBL, cap_period_bytes * HDA_CAP_PERIODS);
+	mmw16(cap_off + SD_LVI, HDA_CAP_PERIODS - 1);
+	mmw16(cap_off + SD_FMT, HDA_FMT_48K_S16_2CH);
+	mmw32(cap_off + SD_BDPL, cap_bdl_phys);
+	mmw32(cap_off + SD_BDPU, 0);
+	mmw8(cap_off + SD_STS, 0x1C);
+	setv(nid_adc, VERB_SET_CONV_FMT, HDA_FMT_48K_S16_2CH);
+	setv(nid_adc, VERB_SET_STREAM_CHAN, (HDA_STREAM_TAG_IN << 4));
+	set_in_amp(nid_adc, in_gain);
+	mmw32(cap_off + SD_CTL, (HDA_STREAM_TAG_IN << 20) | SD_CTL_RUN);
+	cap_next = 0;
+	cap_running = 1;
+}
+
+void hda_set_volume(unsigned pct)
+{
+	if (pct > 100u) {
+		pct = 100u;
+	}
+	out_vol = pct;
+	if (present && nid_dac) {
+		set_out_amp(nid_dac, out_vol);
+	}
+}
+
+unsigned hda_volume(void)
+{
+	return out_vol;
+}
+
+int hda_has_capture(void)
+{
+	return present && nid_adc != 0 && cap_off != 0;
+}
+
+int hda_select_input(int mic)
+{
+	uint8_t pin;
+	if (!hda_has_capture()) {
+		return 0;
+	}
+	cap_sel_mic = mic ? 1 : 0;
+	pin = cap_sel_mic ? nid_mic : nid_line;
+	if (pin == 0) {
+		pin = nid_mic ? nid_mic : nid_line;
+	}
+	if (pin == 0) {
+		return 0;
+	}
+	enable_in_pin(pin, cap_sel_mic);
+	(void)find_adc(pin, w_start, w_count);
+	setv(nid_adc, VERB_SET_STREAM_CHAN, (HDA_STREAM_TAG_IN << 4));
+	set_in_amp(nid_adc, in_gain);
+	return 1;
+}
+
+int hda_mic_selected(void)
+{
+	return cap_sel_mic;
+}
+
+void hda_set_ingain(unsigned pct)
+{
+	if (pct > 100u) {
+		pct = 100u;
+	}
+	in_gain = pct;
+	if (present && nid_adc) {
+		set_in_amp(nid_adc, in_gain);
+	}
+	if (nid_mic) {
+		set_in_amp(nid_mic, in_gain);
+	}
+	if (nid_line) {
+		set_in_amp(nid_line, in_gain);
+	}
+}
+
+unsigned hda_ingain(void)
+{
+	return in_gain;
+}
+
+unsigned hda_peak_in(void)
+{
+	return peak_in;
+}
+
+uint32_t hda_cap_take(int16_t *dst, uint32_t frames)
+{
+	if (dst == NULL || frames == 0) {
+		return 0;
+	}
+	cap_dst = dst;
+	cap_dst_frames = frames;
+	cap_dst_index = 0;
+	return 0;
+}
+
+uint32_t hda_cap_filled(void)
+{
+	return cap_dst_index;
+}
+
+void hda_cap_poll(void)
+{
+	unsigned pk;
+	if (!present || !cap_running || cap_off == 0 || cap_period_bytes == 0) {
+		return;
+	}
+	uint8_t sts = mmr8(cap_off + SD_STS);
+	mmw8(cap_off + SD_STS, sts);
+	uint32_t lpib = mmr32(cap_off + SD_LPIB);
+	uint32_t hw = (lpib / cap_period_bytes) % HDA_CAP_PERIODS;
+	unsigned n = 0;
+	pk = peak_in;
+	if (pk > 64u) {
+		pk -= 64u;
+	} else {
+		pk = 0;
+	}
+	while (cap_next != hw && n < HDA_CAP_PERIODS) {
+		int16_t *src = (int16_t *)(cap_pcm + cap_next * cap_period_bytes);
+		dma_flush(src, cap_period_bytes);
+		for (uint32_t i = 0; i < HDA_CAP_FRAMES * 2u; i++) {
+			int32_t s = src[i];
+			if (s < 0) {
+				s = -s;
+			}
+			if ((unsigned)s > pk) {
+				pk = (unsigned)s;
+			}
+			if (cap_dst != NULL && cap_dst_index < cap_dst_frames) {
+				int32_t g = (int32_t)src[i] * (int32_t)in_gain / 100;
+				if (g > 32767) {
+					g = 32767;
+				}
+				if (g < -32768) {
+					g = -32768;
+				}
+				/* cap_take is frame-based; fill L then R as stereo frames. */
+				cap_dst[cap_dst_index * 2u + (i & 1u)] = (int16_t)g;
+				if (i & 1u) {
+					cap_dst_index++;
+					if (cap_dst_index >= cap_dst_frames) {
+						cap_dst = NULL;
+					}
+				}
+			}
+		}
+		cap_next = (uint8_t)((cap_next + 1) % HDA_CAP_PERIODS);
+		n++;
+	}
+	peak_in = pk;
+	if ((mmr8(cap_off + SD_CTL) & SD_CTL_RUN) == 0) {
+		mmw32(cap_off + SD_CTL, (HDA_STREAM_TAG_IN << 20) | SD_CTL_RUN);
+	}
 }

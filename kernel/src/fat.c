@@ -2,6 +2,7 @@
 #include "klib.h"
 #include "phys.h"
 #include "tty.h"
+#include "usb.h"
 
 #include <stddef.h>
 
@@ -142,8 +143,11 @@ static int rd(uint32_t lba, uint32_t count, void *buf)
 	}
 	for (uint32_t i = 0; i < count; i++) {
 		if (bd->read(part_lba + lba + i, 1, p + i * SECTOR) != 0) {
-			fat_fail("read error");
-			return -1;
+			usb_msc_kick();
+			if (bd->read(part_lba + lba + i, 1, p + i * SECTOR) != 0) {
+				fat_fail("read error");
+				return -1;
+			}
 		}
 		fat_pump();
 	}
@@ -160,8 +164,11 @@ static int wr(uint32_t lba, uint32_t count, const void *buf)
 	}
 	for (uint32_t i = 0; i < count; i++) {
 		if (bd->write(part_lba + lba + i, 1, p + i * SECTOR) != 0) {
-			fat_fail("write error");
-			return -1;
+			usb_msc_kick();
+			if (bd->write(part_lba + lba + i, 1, p + i * SECTOR) != 0) {
+				fat_fail("write error");
+				return -1;
+			}
 		}
 		fat_pump();
 	}
@@ -1431,6 +1438,57 @@ static int fat_mkfs(struct blkdev *dev, uint32_t lba, uint32_t nsec)
 	return 1;
 }
 
+/**
+ * Mount leftover/data FAT32 as D: and, if the MBR slot was wiped by a
+ * 64 MiB image flash, write type 0x0C back so later boots find it.
+ * Never formats the volume — leftover FAT on a 1 GiB stick is real data.
+ */
+static int mount_usr_at(struct blkdev *dev, uint32_t start, uint8_t *mbr, int empty_slot)
+{
+	uint8_t bpb[SECTOR];
+	uint32_t nsec = 0;
+
+	fat_select(FAT_VOL_USR);
+	bd = dev;
+	part_lba = start;
+	if (!fat_bind()) {
+		vols[FAT_VOL_USR].f_mounted = 0;
+		fat_select(FAT_VOL_SYS);
+		return 0;
+	}
+	if (dev->read(start, 1, bpb) == 0) {
+		nsec = r32(bpb + 32);
+		if (nsec == 0) {
+			nsec = r16(bpb + 19);
+		}
+	}
+	if (nsec == 0 || start >= dev->sectors || start + nsec > dev->sectors) {
+		nsec = (uint32_t)(dev->sectors - start);
+	}
+	if (empty_slot >= 0 && mbr != NULL && dev->write != NULL) {
+		uint8_t *ent = mbr + 0x1BE + (unsigned)empty_slot * 16;
+		uint8_t h0, s0, c0, h1, s1, c1;
+		memset(ent, 0, 16);
+		lba_chs(start, &h0, &s0, &c0);
+		lba_chs(start + nsec - 1u, &h1, &s1, &c1);
+		ent[1] = h0;
+		ent[2] = s0;
+		ent[3] = c0;
+		ent[4] = 0x0C;
+		ent[5] = h1;
+		ent[6] = s1;
+		ent[7] = c1;
+		w32(ent + 8, start);
+		w32(ent + 12, nsec);
+		(void)dev->write(0, 1, mbr);
+	}
+	tty_set_color(TTY_COL_AUDIO);
+	tty_printf("fs: mounted leftover FAT32 data '%s'\n", fat_volume());
+	tty_set_color(TTY_COL_FG);
+	fat_select(FAT_VOL_SYS);
+	return 1;
+}
+
 /** Mount an existing data FAT, or create one in leftover MBR space. */
 static void fat_prepare_user(struct blkdev *dev)
 {
@@ -1558,9 +1616,12 @@ static void fat_prepare_user(struct blkdev *dev)
 	}
 	uint32_t nsec = (uint32_t)left;
 	if (looks_fat32(dev, start)) {
-		tty_set_color(TTY_COL_DIM);
-		tty_puts("fs: leftover space already looks like FAT32; not formatting it\n");
-		tty_set_color(TTY_COL_FG);
+		(void)mount_usr_at(dev, start, mbr, empty_slot);
+		return;
+	}
+	/* Unaligned leftover from an older mkfs (same USB, MBR slot wiped). */
+	if (max_end != start && looks_fat32(dev, max_end)) {
+		(void)mount_usr_at(dev, max_end, mbr, empty_slot);
 		return;
 	}
 
@@ -1604,6 +1665,15 @@ static void fat_prepare_user(struct blkdev *dev)
 	tty_printf("fs: mounted FAT32 data '%s'\n", fat_volume());
 	tty_set_color(TTY_COL_FG);
 	fat_select(FAT_VOL_SYS);
+}
+
+/** Retry leftover/data mount (e.g. `mount` after a 64 MiB flash dropped the MBR slot). */
+void fat_mount_data(struct blkdev *dev)
+{
+	if (dev == NULL || vols[FAT_VOL_USR].f_mounted) {
+		return;
+	}
+	fat_prepare_user(dev);
 }
 
 bool fat_mount(struct blkdev *dev)

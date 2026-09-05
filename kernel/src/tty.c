@@ -31,14 +31,16 @@ static void (*idle_fn)(void);
  */
 static uint8_t cells_ch[TTY_MAX_ROWS][TTY_MAX_COLS];
 static uint32_t cells_fg[TTY_MAX_ROWS][TTY_MAX_COLS];
+static uint32_t cells_bg[TTY_MAX_ROWS][TTY_MAX_COLS];
 static uint32_t pix[TTY_MAX_ROWS * FONT_HEIGHT * TTY_PIX_STRIDE];
 
-#define TTY_BACK	96
+#define TTY_BACK	400
 static uint8_t back_ch[TTY_BACK][TTY_MAX_COLS];
 static uint32_t back_fg[TTY_BACK][TTY_MAX_COLS];
 static unsigned back_n;
 static unsigned back_head;
 static unsigned view_off;
+static int serial_quiet;
 
 /* Last glyphs actually painted to the GPU while viewing scrollback. */
 static uint8_t view_ch[TTY_MAX_ROWS][TTY_MAX_COLS];
@@ -59,9 +61,86 @@ void tty_set_idle(void (*fn)(void))
 }
 
 static uint32_t pack_rgb(uint32_t rgb);
-static void plot_at(size_t col, size_t row, unsigned char ch, uint32_t fg);
+static void plot_at(size_t col, size_t row, unsigned char ch, uint32_t fg, uint32_t bg);
+static void tty_hide_cursor(void);
+static void serial_uint(unsigned n);
 
-/** Write bytes to COM1 without interpreting console state. */
+void tty_frame_begin(void)
+{
+	serial_quiet = 1;
+}
+
+void tty_frame_end(void)
+{
+	serial_quiet = 0;
+}
+
+unsigned tty_cursor_col(void)
+{
+	return (unsigned)cursor_col;
+}
+
+unsigned tty_cursor_row(void)
+{
+	return (unsigned)cursor_row;
+}
+
+void tty_set_cursor(unsigned col, unsigned row)
+{
+	tty_hide_cursor();
+	if (col >= cols) {
+		col = (unsigned)(cols ? cols - 1 : 0);
+	}
+	if (row >= rows) {
+		row = (unsigned)(rows ? rows - 1 : 0);
+	}
+	cursor_col = col;
+	cursor_row = row;
+}
+
+/**
+ * Update one cell in the RAM grid and the framebuffer. Serial gets a
+ * CUP + glyph only when the cell actually changed and we are not inside
+ * a quiet frame (full-screen games).
+ */
+void tty_put_xy_bg(unsigned col, unsigned row, char ch, uint32_t rgb, uint32_t bg_rgb)
+{
+	if (view_off) {
+		tty_view_live();
+	}
+	if (col >= cols || row >= rows) {
+		return;
+	}
+	unsigned char uch = (unsigned char)ch;
+	if (uch < 32 || uch >= 127) {
+		uch = '?';
+	}
+	uint32_t packed = pack_rgb(rgb);
+	uint32_t packed_cell_bg = bg_rgb ? pack_rgb(bg_rgb) : packed_bg;
+	if (cells_ch[row][col] == uch && cells_fg[row][col] == packed
+		&& cells_bg[row][col] == packed_cell_bg) {
+		return;
+	}
+	cells_ch[row][col] = uch;
+	cells_fg[row][col] = packed;
+	cells_bg[row][col] = packed_cell_bg;
+	plot_at(col, row, uch, packed, packed_cell_bg);
+	if (serial_quiet) {
+		return;
+	}
+	serial_putc('\033');
+	serial_putc('[');
+	serial_uint(row + 1u);
+	serial_putc(';');
+	serial_uint(col + 1u);
+	serial_putc('H');
+	serial_putc((char)uch);
+}
+
+void tty_put_xy(unsigned col, unsigned row, char ch, uint32_t rgb)
+{
+	tty_put_xy_bg(col, row, ch, rgb, 0);
+}
 static void serial_puts_raw(const char *s)
 {
 	while (*s != '\0') {
@@ -87,38 +166,6 @@ static void serial_uint(unsigned n)
 	}
 }
 
-/**
- * Update one cell in the RAM grid and the framebuffer. Serial gets a
- * CUP + glyph only when the cell actually changed.
- */
-void tty_put_xy(unsigned col, unsigned row, char ch, uint32_t rgb)
-{
-	if (view_off) {
-		tty_view_live();
-	}
-	if (col >= cols || row >= rows) {
-		return;
-	}
-	unsigned char uch = (unsigned char)ch;
-	if (uch < 32 || uch >= 127) {
-		uch = '?';
-	}
-	uint32_t packed = pack_rgb(rgb);
-	if (cells_ch[row][col] == uch && cells_fg[row][col] == packed) {
-		return;
-	}
-	cells_ch[row][col] = uch;
-	cells_fg[row][col] = packed;
-	plot_at(col, row, uch, packed);
-	serial_putc('\033');
-	serial_putc('[');
-	serial_uint(row + 1u);
-	serial_putc(';');
-	serial_uint(col + 1u);
-	serial_putc('H');
-	serial_putc((char)uch);
-}
-
 /** Pack a 0xRRGGBB colour using the framebuffer channel masks. */
 static uint32_t pack_rgb(uint32_t rgb)
 {
@@ -129,7 +176,7 @@ static uint32_t pack_rgb(uint32_t rgb)
 }
 
 /** Plot one 8x16 glyph into the RAM shadow and the GPU. Writes only. */
-static void plot_at(size_t col, size_t row, unsigned char ch, uint32_t fg)
+static void plot_at(size_t col, size_t row, unsigned char ch, uint32_t fg, uint32_t bg)
 {
 	if (col >= cols || row >= rows) {
 		return;
@@ -146,7 +193,7 @@ static void plot_at(size_t col, size_t row, unsigned char ch, uint32_t fg)
 		uint8_t bits = font8x16[ch][gy];
 		uint32_t *slot = pix + (y0 + gy) * TTY_PIX_STRIDE + x0;
 		for (size_t gx = 0; gx < FONT_WIDTH; gx++) {
-			slot[gx] = (bits & (1u << gx)) ? fg : packed_bg;
+			slot[gx] = (bits & (1u << gx)) ? fg : bg;
 		}
 		if (base == NULL) {
 			continue;
@@ -258,7 +305,7 @@ static void tty_redraw_view(void)
 			}
 			view_ch[r][c] = glyph;
 			view_fg[r][c] = colour;
-			plot_at(c, r, glyph, colour);
+			plot_at(c, r, glyph, colour, packed_bg);
 		}
 		tty_idle();
 	}
@@ -355,6 +402,8 @@ static void tty_scroll(void)
 			(rows - 1) * TTY_MAX_COLS);
 		memmove(&cells_fg[0][0], &cells_fg[1][0],
 			(rows - 1) * TTY_MAX_COLS * sizeof(uint32_t));
+		memmove(&cells_bg[0][0], &cells_bg[1][0],
+			(rows - 1) * TTY_MAX_COLS * sizeof(uint32_t));
 		size_t band = FONT_HEIGHT * TTY_PIX_STRIDE;
 		memmove(pix, pix + band, (rows - 1) * band * sizeof(uint32_t));
 		uint32_t *last = pix + (rows - 1) * band;
@@ -370,6 +419,7 @@ static void tty_scroll(void)
 	for (size_t c = 0; c < cols; c++) {
 		cells_ch[rows - 1][c] = ' ';
 		cells_fg[rows - 1][c] = packed_fg;
+		cells_bg[rows - 1][c] = packed_bg;
 	}
 	tty_flush_shadow();
 	view_valid = 0;
@@ -474,6 +524,7 @@ void tty_clear(void)
 		for (size_t c = 0; c < TTY_MAX_COLS; c++) {
 			cells_ch[r][c] = ' ';
 			cells_fg[r][c] = packed_fg;
+			cells_bg[r][c] = packed_bg;
 		}
 	}
 	for (size_t i = 0; i < (size_t)TTY_MAX_ROWS * FONT_HEIGHT * TTY_PIX_STRIDE; i++) {
@@ -531,7 +582,7 @@ static void tty_emit(unsigned char ch)
 			cursor_col--;
 			cells_ch[cursor_row][cursor_col] = ' ';
 			cells_fg[cursor_row][cursor_col] = packed_fg;
-			plot_at(cursor_col, cursor_row, ' ', packed_fg);
+			plot_at(cursor_col, cursor_row, ' ', packed_fg, packed_bg);
 			serial_puts_raw("\b \b");
 		}
 		return;
@@ -539,8 +590,9 @@ static void tty_emit(unsigned char ch)
 	if (cursor_row < TTY_MAX_ROWS && cursor_col < TTY_MAX_COLS) {
 		cells_ch[cursor_row][cursor_col] = ch;
 		cells_fg[cursor_row][cursor_col] = packed_fg;
+		cells_bg[cursor_row][cursor_col] = packed_bg;
 	}
-	plot_at(cursor_col, cursor_row, ch, packed_fg);
+	plot_at(cursor_col, cursor_row, ch, packed_fg, packed_bg);
 	if (ch == FONT_BULLET) {
 		serial_puts_raw("\xE2\x80\xA2");
 	} else if (ch >= 32 && ch < 127) {

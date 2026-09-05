@@ -11,6 +11,8 @@
 #define TTY_COL_ACCENT	0x7EC8C8u
 #define TTY_COL_AUDIO	0xE8B86Du
 #define TTY_COL_ERR	0xE07070u
+#define TTY_COL_SEL_BG	0x3A5A72u
+#define TTY_COL_SEL_FG	0xF4F8FCu
 
 /** Attach the console to a Limine framebuffer and clear the screen. */
 void tty_init(struct limine_framebuffer *fb);
@@ -36,6 +38,25 @@ void tty_clear(void);
  * with a full `tty_clear`. Unchanged cells are skipped.
  */
 void tty_put_xy(unsigned col, unsigned row, char ch, uint32_t rgb);
+
+/**
+ * Like `tty_put_xy` with an explicit background (selection highlight).
+ * Pass `bg == 0` to use the default console background.
+ */
+void tty_put_xy_bg(unsigned col, unsigned row, char ch, uint32_t fg, uint32_t bg);
+
+/**
+ * Quiet serial during a full-screen paint. The game only writes cells;
+ * the OS batches GPU updates and skips COM1 CUP spam (the main source
+ * of Tetris input delay on a 60 Hz redraw).
+ */
+void tty_frame_begin(void);
+void tty_frame_end(void);
+
+/** Console cursor cell (for the line editor). */
+unsigned tty_cursor_col(void);
+unsigned tty_cursor_row(void);
+void tty_set_cursor(unsigned col, unsigned row);
 
 /** Scroll the console view by one history line (hold-repeat uses this). */
 void tty_line_up(void);

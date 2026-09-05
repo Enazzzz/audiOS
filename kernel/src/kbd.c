@@ -281,8 +281,29 @@ static void kbd_handle(uint8_t sc)
 	if (release) {
 		return;
 	}
+	/* Function keys: F5 play/pause, F6 stop, F11/F12 volume. */
+	if (code == 0x3F) {
+		kbd_push(KBD_F5);
+		return;
+	}
+	if (code == 0x40) {
+		kbd_push(KBD_F6);
+		return;
+	}
+	if (code == 0x57) {
+		kbd_push(KBD_F11);
+		return;
+	}
+	if (code == 0x58) {
+		kbd_push(KBD_F12);
+		return;
+	}
 	char ch = shift ? map_shifted[code] : map_unshifted[code];
 	if (ch == 0) {
+		return;
+	}
+	if (ctrl && ch == '\b') {
+		kbd_push(KBD_C_BS);
 		return;
 	}
 	if (ctrl && ch >= 'a' && ch <= 'z') {
@@ -353,6 +374,18 @@ int kbd_held(int key)
 		return held_pgdn;
 	}
 	return 0;
+}
+
+int kbd_shift(void)
+{
+	kbd_poll();
+	return shift;
+}
+
+int kbd_ctrl(void)
+{
+	kbd_poll();
+	return ctrl;
 }
 
 void kbd_flush_queue(void)

@@ -47,6 +47,9 @@ void fat_set_idle(void (*idle)(void));
  */
 bool fat_mount(struct blkdev *dev);
 
+/** Mount leftover D: if it is not already (never formats C:). */
+void fat_mount_data(struct blkdev *dev);
+
 /**
  * Mount the first FAT32 partition of a second USB stick as E:.
  * Never formats that disk.

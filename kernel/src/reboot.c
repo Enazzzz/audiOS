@@ -132,6 +132,8 @@ static int try_acpi_s5(void)
 	}
 	uint32_t pm1a = 0;
 	memcpy(&pm1a, fadt + 64, 4);
+	uint32_t pm1b = 0;
+	memcpy(&pm1b, fadt + 68, 4);
 	uint32_t dsdt_phys = 0;
 	memcpy(&dsdt_phys, fadt + 40, 4);
 	uint16_t typa = 0;
@@ -143,12 +145,17 @@ static int try_acpi_s5(void)
 			(void)parse_s5(dsdt, dlen, &typa);
 		}
 	}
-	if (pm1a == 0) {
+	if (pm1a == 0 && pm1b == 0) {
 		return 0;
 	}
 	uint16_t slp_en = (uint16_t)(1u << 13);
 	uint16_t val = (uint16_t)((typa << 10) | slp_en);
-	outw((uint16_t)pm1a, val);
+	if (pm1a) {
+		outw((uint16_t)pm1a, val);
+	}
+	if (pm1b) {
+		outw((uint16_t)pm1b, val);
+	}
 	return 1;
 }
 
@@ -158,11 +165,12 @@ void system_shutdown(void)
 	try_qemu_poweroff();
 	(void)try_acpi_s5();
 	try_qemu_poweroff();
+	/* Give S5 a moment. If we are still here, return to the shell —
+	 * hanging in cli;hlt is what forced a yank of the power cord. */
+	for (unsigned i = 0; i < 400000u; i++) {
+		io_wait();
+	}
 	tty_set_color(TTY_COL_DIM);
 	tty_puts("board did not power off — use the ATX button, or reboot\n");
 	tty_set_color(TTY_COL_FG);
-	__asm__ volatile ("cli");
-	for (;;) {
-		__asm__ volatile ("hlt");
-	}
 }

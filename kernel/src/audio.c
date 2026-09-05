@@ -4,6 +4,7 @@
 #include "hda.h"
 #include "klib.h"
 #include "pci.h"
+#include "pit.h"
 #include "tty.h"
 #include "version.h"
 
@@ -69,6 +70,15 @@ static uint32_t rs_pos;
 static uint32_t rs_idx;
 static int16_t hold_l;
 static int16_t hold_r;
+static unsigned master_vol = 80;
+static unsigned in_gain_pct = 80;
+static int limiter_on;
+static uint32_t lim_gain = 65536;
+static int paused;
+static unsigned peak_out;
+static unsigned peak_mic;
+static unsigned peak_line;
+static int hud_on = 1;
 
 static void audio_stop_internal(void);
 
@@ -197,6 +207,61 @@ static void engine_frame(int16_t *l, int16_t *r)
 	rec_tap(s, s);
 }
 
+/** Apply limiter and master volume to one stereo frame. */
+static void process_out(int16_t *l, int16_t *r)
+{
+	int32_t a = *l;
+	int32_t b = *r;
+	unsigned pk;
+	if (limiter_on) {
+		int32_t p = a < 0 ? -a : a;
+		int32_t q = b < 0 ? -b : b;
+		if (q > p) {
+			p = q;
+		}
+		if (p > 30000) {
+			uint32_t want = (30000u << 16) / (uint32_t)p;
+			if (want < lim_gain) {
+				lim_gain = want;
+			}
+		} else if (lim_gain < 65536u) {
+			lim_gain += 128u;
+			if (lim_gain > 65536u) {
+				lim_gain = 65536u;
+			}
+		}
+		a = (a * (int32_t)lim_gain) >> 16;
+		b = (b * (int32_t)lim_gain) >> 16;
+	}
+	a = a * (int32_t)master_vol / 100;
+	b = b * (int32_t)master_vol / 100;
+	if (a > 32767) {
+		a = 32767;
+	}
+	if (a < -32768) {
+		a = -32768;
+	}
+	if (b > 32767) {
+		b = 32767;
+	}
+	if (b < -32768) {
+		b = -32768;
+	}
+	*l = (int16_t)a;
+	*r = (int16_t)b;
+	pk = (unsigned)(a < 0 ? -a : a);
+	if ((unsigned)(b < 0 ? -b : b) > pk) {
+		pk = (unsigned)(b < 0 ? -b : b);
+	}
+	if (pk > peak_out) {
+		peak_out = pk;
+	} else if (peak_out > 80u) {
+		peak_out -= 80u;
+	} else {
+		peak_out = 0;
+	}
+}
+
 /** Fill one hardware period of interleaved stereo s16, resampling as needed. */
 static void fill_period(int16_t *dst, uint32_t hw_frames)
 {
@@ -214,6 +279,16 @@ static void fill_period(int16_t *dst, uint32_t hw_frames)
 	}
 	uint32_t step = (uint32_t)(((uint64_t)src_rate << 16) / dst_rate);
 	for (uint32_t i = 0; i < hw_frames; i++) {
+		if (paused) {
+			dst[i * 2] = 0;
+			dst[i * 2 + 1] = 0;
+			if (peak_out > 80u) {
+				peak_out -= 80u;
+			} else {
+				peak_out = 0;
+			}
+			continue;
+		}
 		uint32_t target = rs_pos >> 16;
 		while (rs_idx <= target) {
 			engine_frame(&hold_l, &hold_r);
@@ -222,6 +297,7 @@ static void fill_period(int16_t *dst, uint32_t hw_frames)
 		}
 		dst[i * 2] = hold_l;
 		dst[i * 2 + 1] = hold_r;
+		process_out(&dst[i * 2], &dst[i * 2 + 1]);
 		rs_pos += step;
 	}
 	if (system.play == AUDIO_PLAY_STOPPING) {
@@ -242,6 +318,7 @@ static void audio_stop_internal(void)
 	system.stream_count = 0;
 	rec_pcm = NULL;
 	rec_own_play = 0;
+	paused = 0;
 }
 
 /** Parse a decimal into milles (0.5 → 500). */
@@ -385,9 +462,8 @@ static bool audio_start_play(void)
  */
 bool audio_play_pcm(const int16_t *pcm, uint32_t frames, uint32_t rate, int loops)
 {
-	if (system.play == AUDIO_PLAY_PLAYING) {
-		audio_fail("already playing (stop first)");
-		return false;
+	if (system.play == AUDIO_PLAY_PLAYING || system.play == AUDIO_PLAY_STOPPING) {
+		audio_stop_internal();
 	}
 	if (pcm == NULL || frames == 0 || rate == 0) {
 		audio_fail("empty clip");
@@ -440,6 +516,171 @@ bool audio_rec_start(int16_t *dst, uint32_t frames)
 	return true;
 }
 
+bool audio_rec_analog(int16_t *dst, uint32_t frames, int mic)
+{
+	uint64_t t0;
+	if (dst == NULL || frames == 0) {
+		audio_fail("empty rec buffer");
+		return false;
+	}
+	if (!hda_has_capture()) {
+		audio_fail("no analog input on this codec (QEMU hda-output has none; ALC662 mic/line should)");
+		return false;
+	}
+	memset(dst, 0, (size_t)frames * 4u);
+	if (!hda_select_input(mic)) {
+		audio_fail("could not select mic/line pin");
+		return false;
+	}
+	hda_cap_take(dst, frames);
+	t0 = pit_ticks();
+	while (hda_cap_filled() < frames && pit_ticks() - t0 < 20000u) {
+		audio_service();
+	}
+	if (hda_cap_filled() == 0) {
+		audio_fail("analog capture produced silence (check jack / VREF)");
+		return false;
+	}
+	audio_ok();
+	return true;
+}
+
+void audio_set_volume(unsigned pct)
+{
+	if (pct > 100u) {
+		pct = 100u;
+	}
+	master_vol = pct;
+	if (hda_present()) {
+		hda_set_volume(pct);
+	}
+}
+
+unsigned audio_volume(void)
+{
+	return master_vol;
+}
+
+void audio_bump_volume(int delta)
+{
+	int v = (int)master_vol + delta;
+	if (v < 0) {
+		v = 0;
+	}
+	if (v > 100) {
+		v = 100;
+	}
+	audio_set_volume((unsigned)v);
+}
+
+void audio_set_ingain(unsigned pct)
+{
+	if (pct > 100u) {
+		pct = 100u;
+	}
+	in_gain_pct = pct;
+	if (hda_present()) {
+		hda_set_ingain(pct);
+	}
+}
+
+unsigned audio_ingain(void)
+{
+	return in_gain_pct;
+}
+
+void audio_set_limiter(int on)
+{
+	limiter_on = on ? 1 : 0;
+	lim_gain = 65536u;
+}
+
+int audio_limiter(void)
+{
+	return limiter_on;
+}
+
+void audio_pause_toggle(void)
+{
+	if (system.play != AUDIO_PLAY_PLAYING) {
+		return;
+	}
+	paused = !paused;
+}
+
+int audio_paused(void)
+{
+	return paused;
+}
+
+int audio_is_playing(void)
+{
+	return system.play == AUDIO_PLAY_PLAYING;
+}
+
+unsigned audio_peak_out(void)
+{
+	return peak_out;
+}
+
+unsigned audio_peak_mic(void)
+{
+	return peak_mic;
+}
+
+unsigned audio_peak_line(void)
+{
+	return peak_line;
+}
+
+void audio_hud_set(int on)
+{
+	hud_on = on ? 1 : 0;
+}
+
+/** One 8-character meter bar. */
+static void hud_bar(char *out, unsigned peak)
+{
+	unsigned n = peak * 8u / 32768u;
+	unsigned i;
+	if (n > 8u) {
+		n = 8u;
+	}
+	for (i = 0; i < 8u; i++) {
+		out[i] = (i < n) ? '#' : '-';
+	}
+	out[8] = '\0';
+}
+
+void audio_draw_hud(void)
+{
+	char line[48];
+	char bo[9], bm[9], bl[9];
+	unsigned cols;
+	unsigned start;
+	unsigned i;
+	if (!hud_on) {
+		return;
+	}
+	hud_bar(bo, peak_out);
+	hud_bar(bm, peak_mic);
+	hud_bar(bl, peak_line);
+	ksnprintf(line, sizeof(line), "V%u%s L%s M%s I%s",
+		master_vol, limiter_on ? "!" : " ", bo, bm, bl);
+	cols = tty_cols();
+	start = (unsigned)strlen(line);
+	if (start + 1u >= cols) {
+		start = 0;
+	} else {
+		start = cols - start;
+	}
+	tty_frame_begin();
+	for (i = 0; line[i]; i++) {
+		tty_put_xy(start + i, 0, line[i], TTY_COL_AUDIO);
+	}
+	tty_frame_end();
+}
+
 /** Detect hardware, install defaults, and mark the subsystem ready. */
 void audio_init(void)
 {
@@ -456,6 +697,8 @@ void audio_init(void)
 		selected_device = (idx == UINT32_MAX) ? 0 : idx;
 		ksnprintf(system.device_name, sizeof(system.device_name), "%s", hda_name());
 		have_out = 1;
+		hda_set_volume(master_vol);
+		hda_set_ingain(in_gain_pct);
 	}
 	if (ac97_init()) {
 		if (!have_out) {
@@ -477,7 +720,31 @@ void audio_init(void)
 /** Pump DMA so playback continues while the shell stays responsive. */
 void audio_service(void)
 {
+	if (hda_present()) {
+		hda_cap_poll();
+		unsigned pin = hda_peak_in();
+		if (hda_mic_selected()) {
+			peak_mic = pin;
+			if (peak_line > 40u) {
+				peak_line -= 40u;
+			} else {
+				peak_line = 0;
+			}
+		} else {
+			peak_line = pin;
+			if (peak_mic > 40u) {
+				peak_mic -= 40u;
+			} else {
+				peak_mic = 0;
+			}
+		}
+	}
 	if (system.play == AUDIO_PLAY_STOPPED) {
+		if (peak_out > 40u) {
+			peak_out -= 40u;
+		} else {
+			peak_out = 0;
+		}
 		return;
 	}
 	if (silent_backend) {
@@ -736,6 +1003,10 @@ static void audio_help(void)
 	tty_puts("  audio set          rate, buffer, format, channels, device\n");
 	tty_puts("  audio status       underruns and frames played\n");
 	tty_puts("  audio test         continuous 440 Hz tone until stop\n");
+	tty_puts("  audio vol [0-100]  master volume (F11 down, F12 up)\n");
+	tty_puts("  audio limiter on|off  headphone safety limiter\n");
+	tty_puts("  audio gain [0-100] capture / input gain\n");
+	tty_puts("  audio pause        toggle play/pause (also F5)\n");
 	tty_puts("  tone               sine|square|saw|noise|silence [freq] [amp] [dur]\n");
 	tty_puts("  play <clip|file>   play a clip or PCM WAV (loop|n)\n");
 	tty_puts("  stop               halt playback\n");
@@ -779,8 +1050,42 @@ void audio_cmd(int argc, char **argv)
 		tty_puts("playing...\n");
 		tty_set_color(TTY_COL_FG);
 		tty_puts("continuous test — stop to end\n");
+	} else if (strcmp(sub, "vol") == 0 || strcmp(sub, "volume") == 0) {
+		if (argc > 2) {
+			audio_set_volume(parse_freq(argv[2]));
+		}
+		tty_printf("volume %u%%  limiter %s  ingain %u%%\n",
+			master_vol, limiter_on ? "on" : "off", in_gain_pct);
+	} else if (strcmp(sub, "limiter") == 0) {
+		if (argc > 2) {
+			if (strcmp(argv[2], "on") == 0 || strcmp(argv[2], "1") == 0) {
+				audio_set_limiter(1);
+			} else if (strcmp(argv[2], "off") == 0 || strcmp(argv[2], "0") == 0) {
+				audio_set_limiter(0);
+			}
+		}
+		tty_printf("limiter %s (on for headphones, off for speakers)\n",
+			limiter_on ? "on" : "off");
+	} else if (strcmp(sub, "gain") == 0) {
+		if (argc > 2) {
+			uint32_t g = parse_mille(argv[2]);
+			if (argv[2][0] >= '0' && argv[2][0] <= '9' && strchr(argv[2], '.') == NULL
+				&& parse_freq(argv[2]) <= 100u) {
+				audio_set_ingain(parse_freq(argv[2]));
+			} else {
+				audio_set_ingain(g / 10u);
+			}
+		}
+		tty_printf("input gain %u%%\n", in_gain_pct);
+	} else if (strcmp(sub, "pause") == 0) {
+		if (system.play != AUDIO_PLAY_PLAYING) {
+			audio_fail("nothing playing");
+			return;
+		}
+		audio_pause_toggle();
+		tty_puts(paused ? "paused\n" : "resumed\n");
 	} else {
-		audio_fail("unknown audio command (help, devices, info, set, status, test)");
+		audio_fail("unknown audio command (help, devices, info, set, status, test, vol, limiter, gain, pause)");
 	}
 }
 
@@ -837,15 +1142,20 @@ void tone_cmd(int argc, char **argv)
 
 void play_cmd(int argc, char **argv)
 {
+	struct clip *c;
 	if (argc < 2) {
-		tty_puts("usage: play <clip|file.wav> [loop|n]\n");
-		return;
-	}
-	struct clip *c = clip_find(argv[1]);
-	if (c == NULL) {
-		c = clip_load_file(argv[1], ".play");
+		c = clip_current();
 		if (c == NULL) {
+			tty_puts("usage: play <clip|file.wav> [loop|n]  (or use <name> first)\n");
 			return;
+		}
+	} else {
+		c = clip_find(argv[1]);
+		if (c == NULL) {
+			c = clip_load_file(argv[1], ".play");
+			if (c == NULL) {
+				return;
+			}
 		}
 	}
 	int loops = 1;
@@ -868,7 +1178,8 @@ void play_cmd(int argc, char **argv)
 		return;
 	}
 	tty_set_color(TTY_COL_AUDIO);
-	tty_printf("playing %s%s...\n", c->name[0] == '.' ? argv[1] : c->name,
+	tty_printf("playing %s%s...\n",
+		(c->name[0] == '.' && argc > 1) ? argv[1] : c->name,
 		loops < 0 ? " loop" : "");
 	tty_set_color(TTY_COL_FG);
 }

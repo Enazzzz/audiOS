@@ -2,6 +2,7 @@
 #include "audio.h"
 #include "files.h"
 #include "fs.h"
+#include "hda.h"
 #include "klib.h"
 #include "phys.h"
 #include "tty.h"
@@ -29,6 +30,19 @@ struct seq_ev {
 static struct seq_ev seq_ev[SEQ_MAX];
 static unsigned seq_n;
 static uint32_t seq_len;
+static uint32_t seq_bpm = 120;
+static char current_name[CLIP_NAME];
+static int16_t *undo_pcm;
+static int16_t *redo_pcm;
+static uint32_t undo_cap;
+static uint32_t undo_frames;
+static uint32_t undo_rate;
+static char undo_name[CLIP_NAME];
+static uint32_t redo_frames;
+static uint32_t redo_rate;
+static char redo_name[CLIP_NAME];
+static uint32_t mark_a = 0xFFFFFFFFu;
+static uint32_t mark_b = 0xFFFFFFFFu;
 
 /** Print a recoverable music-system error. Never panics. */
 static void clip_fail(const char *msg)
@@ -240,6 +254,17 @@ static int parse_frames(const char *s, uint32_t rate, uint32_t *out)
 		*out = (uint32_t)((uint64_t)whole * rate / 1000ull);
 		return 1;
 	}
+	if (p[0] == 'b' || p[0] == 'B') {
+		if (seq_bpm == 0) {
+			seq_bpm = 120;
+		}
+		if (p[1] == 'a' || p[1] == 'A') {
+			*out = (uint32_t)((uint64_t)whole * 4ull * rate * 60ull / seq_bpm);
+		} else {
+			*out = (uint32_t)((uint64_t)whole * rate * 60ull / seq_bpm);
+		}
+		return 1;
+	}
 	if (p[0] == 's' || p[0] == 'S') {
 		*out = (uint32_t)(((uint64_t)whole * 1000ull + frac) * rate / 1000ull);
 		return 1;
@@ -447,6 +472,9 @@ static struct clip *clip_make(const char *name, uint32_t rate, uint32_t frames)
 	c->frames = frames;
 	c->rate = rate;
 	c->used = 1;
+	if (name[0] != '.') {
+		ksnprintf(current_name, CLIP_NAME, "%s", name);
+	}
 	return c;
 }
 
@@ -732,6 +760,125 @@ void clip_init(void)
 		pool_cap = 0;
 		scratch_cap = 0;
 	}
+	undo_cap = CLIP_MAX_FRAMES;
+	undo_pcm = phys_alloc(CLIP_MAX_FRAMES * 4u, &phys);
+	redo_pcm = phys_alloc(CLIP_MAX_FRAMES * 4u, &phys);
+	undo_frames = 0;
+	redo_frames = 0;
+	current_name[0] = '\0';
+	seq_bpm = 120;
+}
+
+struct clip *clip_current(void)
+{
+	if (current_name[0] == '\0') {
+		return NULL;
+	}
+	return clip_find(current_name);
+}
+
+const char *clip_current_name(void)
+{
+	return current_name;
+}
+
+void clip_use(const char *name)
+{
+	struct clip *c = clip_find(name);
+	if (c == NULL) {
+		clip_fail("no such clip");
+		return;
+	}
+	ksnprintf(current_name, CLIP_NAME, "%s", c->name);
+	tty_printf("current clip %s\n", current_name);
+}
+
+uint32_t seq_get_bpm(void)
+{
+	return seq_bpm;
+}
+
+void seq_set_bpm(uint32_t bpm)
+{
+	if (bpm >= 20 && bpm <= 400) {
+		seq_bpm = bpm;
+	}
+}
+
+/** Snapshot `c` so `undo` can restore it. */
+static void undo_push(struct clip *c)
+{
+	if (c == NULL || undo_pcm == NULL || c->frames > undo_cap) {
+		return;
+	}
+	if (redo_pcm && undo_frames) {
+		memcpy(redo_pcm, undo_pcm, (size_t)undo_frames * 4u);
+		redo_frames = undo_frames;
+		redo_rate = undo_rate;
+		ksnprintf(redo_name, CLIP_NAME, "%s", undo_name);
+	}
+	memcpy(undo_pcm, c->pcm, (size_t)c->frames * 4u);
+	undo_frames = c->frames;
+	undo_rate = c->rate;
+	ksnprintf(undo_name, CLIP_NAME, "%s", c->name);
+}
+
+int clip_undo(void)
+{
+	struct clip *c;
+	if (undo_pcm == NULL || undo_frames == 0 || undo_name[0] == '\0') {
+		clip_fail("nothing to undo");
+		return 0;
+	}
+	c = clip_find(undo_name);
+	if (c == NULL) {
+		c = clip_make(undo_name, undo_rate, undo_frames);
+		if (c == NULL) {
+			return 0;
+		}
+	} else if (c->frames != undo_frames) {
+		c = clip_make(undo_name, undo_rate, undo_frames);
+		if (c == NULL) {
+			return 0;
+		}
+	}
+	if (redo_pcm && c->pcm) {
+		memcpy(redo_pcm, c->pcm, (size_t)c->frames * 4u);
+		redo_frames = c->frames;
+		redo_rate = c->rate;
+		ksnprintf(redo_name, CLIP_NAME, "%s", c->name);
+	}
+	memcpy(c->pcm, undo_pcm, (size_t)undo_frames * 4u);
+	c->frames = undo_frames;
+	c->rate = undo_rate;
+	tty_printf("undo %s (%u frames)\n", c->name, c->frames);
+	return 1;
+}
+
+int clip_redo(void)
+{
+	struct clip *c;
+	if (redo_pcm == NULL || redo_frames == 0 || redo_name[0] == '\0') {
+		clip_fail("nothing to redo");
+		return 0;
+	}
+	c = clip_find(redo_name);
+	if (c == NULL) {
+		c = clip_make(redo_name, redo_rate, redo_frames);
+		if (c == NULL) {
+			return 0;
+		}
+	} else if (c->frames != redo_frames) {
+		c = clip_make(redo_name, redo_rate, redo_frames);
+		if (c == NULL) {
+			return 0;
+		}
+	}
+	memcpy(c->pcm, redo_pcm, (size_t)redo_frames * 4u);
+	c->frames = redo_frames;
+	c->rate = redo_rate;
+	tty_printf("redo %s (%u frames)\n", c->name, c->frames);
+	return 1;
 }
 
 static int is_op(const char *s)
@@ -808,6 +955,12 @@ static void cmd_clip_info(struct clip *c)
 	tty_printf("  duration: %u.%03u s\n", ms / 1000u, ms % 1000u);
 	tty_printf("  channels: 2 (s16 interleaved)\n");
 	tty_printf("  peak:     %u / 32767\n", peak);
+	if (mark_a != 0xFFFFFFFFu || mark_b != 0xFFFFFFFFu) {
+		tty_printf("  marks:    a=%u  b=%u\n", mark_a, mark_b);
+	}
+	if (current_name[0] && strcmp(current_name, c->name) == 0) {
+		tty_puts("  (current clip)\n");
+	}
 	tty_set_color(TTY_COL_FG);
 }
 
@@ -1267,14 +1420,18 @@ void music_help(void)
 	tty_puts("  crush decimate distort lpf hpf bpf delay pan vary\n");
 	tty_puts("  noise <dst> <dur> [amp]    white noise (uses seed)\n");
 	tty_puts("  seed <n>                   deterministic RNG\n");
-	tty_puts("  proc <clip> [dst] op ...   chain, e.g. gain 0.5 lpf 2000\n");
-	tty_puts("  seq add|list|clear|len|render|play\n");
+	tty_puts("  proc <clip> [dst] op ...   chain; omit clip to use current\n");
 	tty_puts("  rec <name> <dur>           record the output mix\n");
+	tty_puts("  rec mic|line <name> <dur>  analog capture (ALC662 jacks)\n");
+	tty_puts("  use <name>                 set current clip (proc gain 0.5)\n");
+	tty_puts("  undo / redo                last clip operation\n");
+	tty_puts("  mark [a|b] [time]          in/out points on current clip\n");
+	tty_puts("  seq add|list|clear|len|render|play|bpm\n");
 	tty_puts("  drop <name>                free a clip slot\n");
 	tty_puts("  play <clip|file> [loop|n]  loop is until stop\n");
 	tty_puts("  script <file>              run commands from a text file\n");
 	tty_puts("pitch resamples (length changes); add keep to restore length.\n");
-	tty_puts("stretch changes length; rec captures the mix, not analog in.\n");
+	tty_puts("stretch changes length; rec mix is the engine, rec mic/line is analog.\n");
 	tty_set_color(TTY_COL_FG);
 }
 
@@ -1285,7 +1442,8 @@ int music_is_verb(const char *verb)
 		"slice", "join", "mix", "repeat", "reverse", "gain", "norm",
 		"fade", "pitch", "stretch", "rate", "crush", "decimate",
 		"distort", "noise", "seed", "lpf", "hpf", "bpf", "delay",
-		"pan", "vary", "proc", "seq", "rec", "drop", NULL
+		"pan", "vary", "proc", "seq", "rec", "drop", "use", "undo",
+		"redo", "mark", "cue", NULL
 	};
 	for (int i = 0; v[i]; i++) {
 		if (strcmp(verb, v[i]) == 0) {
@@ -1321,6 +1479,88 @@ void music_cmd(int argc, char **argv)
 	const char *cmd = argv[0];
 	if (strcmp(cmd, "music") == 0) {
 		music_help();
+		return;
+	}
+	if (strcmp(cmd, "use") == 0) {
+		if (argc < 2) {
+			if (current_name[0]) {
+				tty_printf("current clip %s\n", current_name);
+			} else {
+				clip_fail("usage: use <name>");
+			}
+			return;
+		}
+		clip_use(argv[1]);
+		return;
+	}
+	if (strcmp(cmd, "undo") == 0) {
+		(void)clip_undo();
+		return;
+	}
+	if (strcmp(cmd, "redo") == 0) {
+		(void)clip_redo();
+		return;
+	}
+	if (strcmp(cmd, "mark") == 0) {
+		struct clip *c = clip_current();
+		if (c == NULL) {
+			clip_fail("no current clip");
+			return;
+		}
+		if (argc < 2) {
+			tty_printf("marks a=%u b=%u (clip %s, %u frames)\n",
+				mark_a, mark_b, c->name, c->frames);
+			return;
+		}
+		const char *which = argv[1];
+		uint32_t *slot = NULL;
+		int ti = 2;
+		if (strcmp(which, "a") == 0 || strcmp(which, "in") == 0) {
+			slot = &mark_a;
+		} else if (strcmp(which, "b") == 0 || strcmp(which, "out") == 0) {
+			slot = &mark_b;
+		} else {
+			slot = &mark_a;
+			ti = 1;
+		}
+		if (ti >= argc) {
+			clip_fail("usage: mark [a|b] <time>");
+			return;
+		}
+		uint32_t fr = 0;
+		if (!parse_frames(argv[ti], c->rate, &fr)) {
+			clip_fail("bad mark time");
+			return;
+		}
+		if (fr > c->frames) {
+			fr = c->frames;
+		}
+		*slot = fr;
+		tty_printf("mark %s %u\n", slot == &mark_a ? "a" : "b", fr);
+		return;
+	}
+	if (strcmp(cmd, "cue") == 0) {
+		struct clip *c = clip_current();
+		if (c == NULL || argc < 2) {
+			clip_fail("usage: cue <time>  (sets mark a on current)");
+			return;
+		}
+		uint32_t fr = 0;
+		if (!parse_frames(argv[1], c->rate, &fr) || fr >= c->frames) {
+			clip_fail("bad cue");
+			return;
+		}
+		mark_a = fr;
+		if (!audio_is_playing()) {
+			uint32_t n = c->rate / 4u;
+			if (fr + n > c->frames) {
+				n = c->frames - fr;
+			}
+			if (n > 0) {
+				(void)audio_play_pcm(c->pcm + fr * 2u, n, c->rate, 1);
+			}
+		}
+		tty_printf("cue %u\n", fr);
 		return;
 	}
 	if (strcmp(cmd, "seed") == 0) {
@@ -1455,30 +1695,45 @@ void music_cmd(int argc, char **argv)
 	if (strcmp(cmd, "slice") == 0) {
 		int next = 0;
 		struct clip *src = NULL;
-		if (argc < 4) {
-			clip_fail("usage: slice <src> [dst] <start> <end>");
+		if (argc < 2) {
+			clip_fail("usage: slice <src> [dst] <start> <end>  (or marks on current)");
 			return;
 		}
 		src = clip_find(argv[1]);
 		if (src == NULL) {
-			clip_fail("no such clip");
-			return;
+			src = clip_current();
+			next = 1;
+			if (src == NULL) {
+				clip_fail("no such clip");
+				return;
+			}
+		} else {
+			next = 2;
 		}
 		const char *dstn = src->name;
-		next = 2;
-		if (argc >= 5 && clip_find(argv[2]) == NULL && strchr(argv[2], '.') == NULL
-			&& (argv[2][0] < '0' || argv[2][0] > '9')) {
-			dstn = argv[2];
-			next = 3;
-		}
-		if (next + 1 >= argc) {
-			clip_fail("usage: slice <src> [dst] <start> <end>");
-			return;
+		if (next < argc && clip_find(argv[next]) == NULL && strchr(argv[next], '.') == NULL
+			&& (argv[next][0] < '0' || argv[next][0] > '9')
+			&& strcmp(argv[next], "a") != 0) {
+			dstn = argv[next];
+			next++;
 		}
 		uint32_t a = 0;
 		uint32_t b = 0;
-		if (!parse_frames(argv[next], src->rate, &a) || !parse_frames(argv[next + 1], src->rate, &b)) {
-			clip_fail("bad slice range");
+		if (next + 1 < argc) {
+			if (!parse_frames(argv[next], src->rate, &a) || !parse_frames(argv[next + 1], src->rate, &b)) {
+				clip_fail("bad slice range");
+				return;
+			}
+		} else if (mark_a != 0xFFFFFFFFu && mark_b != 0xFFFFFFFFu) {
+			a = mark_a;
+			b = mark_b;
+			if (a > b) {
+				uint32_t t = a;
+				a = b;
+				b = t;
+			}
+		} else {
+			clip_fail("usage: slice <src> [dst] <start> <end> (or mark a/b first)");
 			return;
 		}
 		if (b > src->frames) {
@@ -1489,10 +1744,22 @@ void music_cmd(int argc, char **argv)
 			return;
 		}
 		uint32_t n = b - a;
+		undo_push(src);
 		if (strcmp(dstn, src->name) == 0) {
 			memmove(src->pcm, src->pcm + a * 2u, (size_t)n * 4u);
 			src->frames = n;
 			tty_printf("sliced %s to %u frames\n", src->name, n);
+			ksnprintf(current_name, CLIP_NAME, "%s", src->name);
+			if (!audio_is_playing()) {
+				uint32_t prev = src->rate / 3u;
+				if (prev > src->frames) {
+					prev = src->frames;
+				}
+				if (prev > 0) {
+					(void)audio_play_pcm(src->pcm, prev, src->rate, 1);
+					tty_puts("preview...\n");
+				}
+			}
 			return;
 		}
 		struct clip *d = clip_make(dstn, src->rate, n);
@@ -1501,6 +1768,16 @@ void music_cmd(int argc, char **argv)
 		}
 		memcpy(d->pcm, src->pcm + a * 2u, (size_t)n * 4u);
 		tty_printf("sliced %s → %s (%u frames)\n", src->name, d->name, n);
+		if (!audio_is_playing()) {
+			uint32_t prev = d->rate / 3u;
+			if (prev > d->frames) {
+				prev = d->frames;
+			}
+			if (prev > 0) {
+				(void)audio_play_pcm(d->pcm, prev, d->rate, 1);
+				tty_puts("preview...\n");
+			}
+		}
 		return;
 	}
 	if (strcmp(cmd, "join") == 0 || strcmp(cmd, "mix") == 0) {
@@ -1625,16 +1902,25 @@ void music_cmd(int argc, char **argv)
 		return;
 	}
 	if (strcmp(cmd, "proc") == 0) {
-		if (argc < 3) {
-			clip_fail("usage: proc <src> [dst] op args ...");
+		if (argc < 2) {
+			clip_fail("usage: proc [src] [dst] op ...");
 			return;
 		}
+		int i = 1;
 		struct clip *src = clip_find(argv[1]);
-		if (src == NULL) {
+		if (src != NULL) {
+			i = 2;
+		} else if (is_op(argv[1])) {
+			src = clip_current();
+			i = 1;
+		} else {
 			clip_fail("no such clip");
 			return;
 		}
-		int i = 2;
+		if (src == NULL) {
+			clip_fail("no current clip (use <name>)");
+			return;
+		}
 		struct clip *c = src;
 		if (i < argc && !is_op(argv[i])) {
 			c = clip_copy(src, argv[i]);
@@ -1643,6 +1929,7 @@ void music_cmd(int argc, char **argv)
 			}
 			i++;
 		}
+		undo_push(c);
 		while (i < argc) {
 			int used = 0;
 			if (!apply_op(c, argc - i, argv + i, &used)) {
@@ -1655,10 +1942,18 @@ void music_cmd(int argc, char **argv)
 	}
 	if (strcmp(cmd, "seq") == 0) {
 		if (argc < 2) {
-			clip_fail("usage: seq add|list|clear|len|render|play");
+			clip_fail("usage: seq add|list|clear|len|render|play|bpm");
 			return;
 		}
 		const char *sub = argv[1];
+		if (strcmp(sub, "bpm") == 0 || strcmp(sub, "tempo") == 0 || strcmp(sub, "clock") == 0) {
+			if (argc > 2) {
+				uint32_t b = parse_u32(argv[2]);
+				seq_set_bpm(b);
+			}
+			tty_printf("seq bpm %u  (times: 4b = 4 beats, 1bar = 4 beats)\n", seq_bpm);
+			return;
+		}
 		if (strcmp(sub, "clear") == 0) {
 			seq_n = 0;
 			seq_len = 0;
@@ -1671,8 +1966,11 @@ void music_cmd(int argc, char **argv)
 			for (unsigned i = 0; i < seq_n; i++) {
 				uint32_t ms = (uint32_t)((uint64_t)seq_ev[i].start * 1000ull / er);
 				tty_set_color(TTY_COL_DIM);
-				tty_printf("  %u  %s  %u.%03u s (%u frames)\n",
-					i, seq_ev[i].name, ms / 1000u, ms % 1000u, seq_ev[i].start);
+				tty_printf("  %u  %s  %u.%03u s  beat %u.%02u  (%u frames)\n",
+					i, seq_ev[i].name, ms / 1000u, ms % 1000u,
+					seq_bpm ? (unsigned)((uint64_t)seq_ev[i].start * seq_bpm / er / 60u) : 0,
+					seq_bpm ? (unsigned)(((uint64_t)seq_ev[i].start * seq_bpm * 100ull / er / 60u) % 100ull) : 0,
+					seq_ev[i].start);
 				tty_set_color(TTY_COL_FG);
 			}
 			if (seq_n == 0) {
@@ -1742,9 +2040,25 @@ void music_cmd(int argc, char **argv)
 				clip_fail("seq has no length");
 				return;
 			}
-			const char *dstn = (argc > 2) ? argv[2] : ".seq";
-			if (strcmp(sub, "play") == 0) {
-				dstn = ".seq";
+			const char *dstn = ".seq";
+			uint32_t from = 0;
+			int play = (strcmp(sub, "play") == 0);
+			if (!play && argc > 2) {
+				dstn = argv[2];
+			}
+			if (play && argc > 2) {
+				if (strcmp(argv[2], "bar") == 0 && argc > 3) {
+					uint32_t bar = parse_u32(argv[3]);
+					from = (uint32_t)((uint64_t)bar * 4ull * er * 60ull / (seq_bpm ? seq_bpm : 120u));
+				} else if (argv[2][0] >= '0' && argv[2][0] <= '9') {
+					unsigned step = parse_u32(argv[2]);
+					if (step < seq_n) {
+						from = seq_ev[step].start;
+					} else {
+						clip_fail("seq play step out of range");
+						return;
+					}
+				}
 			}
 			struct clip *d = clip_make(dstn, er, end);
 			if (d == NULL) {
@@ -1756,11 +2070,15 @@ void music_cmd(int argc, char **argv)
 					mix_into(d, s, seq_ev[i].start);
 				}
 			}
-			if (strcmp(sub, "play") == 0) {
-				if (!audio_play_pcm(d->pcm, d->frames, d->rate, 1)) {
+			if (play) {
+				if (from >= d->frames) {
+					clip_fail("seq play start is past the end");
 					return;
 				}
-				tty_puts("playing seq...\n");
+				if (!audio_play_pcm(d->pcm + from * 2u, d->frames - from, d->rate, 1)) {
+					return;
+				}
+				tty_printf("playing seq from %u...\n", from);
 			} else {
 				tty_printf("seq render → %s (%u frames)\n", d->name, d->frames);
 			}
@@ -1770,18 +2088,38 @@ void music_cmd(int argc, char **argv)
 		return;
 	}
 	if (strcmp(cmd, "rec") == 0) {
-		if (argc < 3) {
-			clip_fail("usage: rec <name> <dur>");
+		int mic = -1;
+		int ai = 1;
+		if (argc >= 2 && strcmp(argv[1], "mic") == 0) {
+			mic = 1;
+			ai = 2;
+		} else if (argc >= 2 && strcmp(argv[1], "line") == 0) {
+			mic = 0;
+			ai = 2;
+		}
+		if (argc < ai + 2) {
+			clip_fail("usage: rec [mic|line] <name> <dur>");
 			return;
 		}
-		uint32_t rate = audio_system_get()->sample_rate;
+		uint32_t rate = (mic >= 0 && hda_present()) ? hda_hw_rate() : audio_system_get()->sample_rate;
+		if (rate == 0) {
+			rate = audio_system_get()->sample_rate;
+		}
 		uint32_t frames = 0;
-		if (!parse_frames(argv[2], rate, &frames) || frames == 0) {
+		if (!parse_frames(argv[ai + 1], rate, &frames) || frames == 0) {
 			clip_fail("bad duration");
 			return;
 		}
-		struct clip *c = clip_make(argv[1], rate, frames);
+		struct clip *c = clip_make(argv[ai], rate, frames);
 		if (c == NULL) {
+			return;
+		}
+		if (mic >= 0) {
+			if (!audio_rec_analog(c->pcm, c->frames, mic)) {
+				return;
+			}
+			tty_printf("recording %s → %s (%u frames)\n",
+				mic ? "mic" : "line", c->name, c->frames);
 			return;
 		}
 		if (!audio_rec_start(c->pcm, c->frames)) {
@@ -1793,28 +2131,34 @@ void music_cmd(int argc, char **argv)
 
 	/* In-place / src [dst] DSP verbs. */
 	if (is_op(cmd)) {
-		if (argc < 2) {
-			clip_fail("clip name required");
-			return;
+		int i = 1;
+		struct clip *src = NULL;
+		if (i < argc) {
+			src = clip_find(argv[i]);
 		}
-		struct clip *src = clip_find(argv[1]);
+		if (src != NULL) {
+			i++;
+		} else {
+			src = clip_current();
+		}
 		if (src == NULL) {
-			clip_fail("no such clip");
+			clip_fail("no current clip (use <name> or pass a clip)");
 			return;
 		}
-		int i = 2;
 		struct clip *c = src;
 		if (i < argc && !is_op(argv[i]) && argv[i][0] != '-'
 			&& (argv[i][0] < '0' || argv[i][0] > '9')
 			&& strchr(argv[i], '.') == NULL
 			&& strcmp(argv[i], "in") != 0 && strcmp(argv[i], "out") != 0
-			&& strcmp(argv[i], "keep") != 0) {
+			&& strcmp(argv[i], "keep") != 0
+			&& clip_find(argv[i]) == NULL) {
 			c = clip_copy(src, argv[i]);
 			if (c == NULL) {
 				return;
 			}
 			i++;
 		}
+		undo_push(c);
 		int used = 0;
 		char *opv[8];
 		int opa = 0;

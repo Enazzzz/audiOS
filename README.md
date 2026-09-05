@@ -1,13 +1,13 @@
 # audiOS
 
 audiOS is a lightweight, command-line-first operating system for digital
-audio. **v0.1.9** is built around one machine: the **ASRock 960GM-GS3 FX**
+audio. **v0.2.0** is built around one machine: the **ASRock 960GM-GS3 FX**
 (AMD FX, 760G/SB710, Realtek ALC662).
 
 ```
-audiOS 0.1.9
+audiOS 0.2.0
 96 kHz • 24-bit • 2 channels
-1280x1024 framebuffer • 160x64 text
+1024x768 framebuffer • 128x48 text
 audiOS>
 ```
 
@@ -17,7 +17,7 @@ bumps **minor**. A huge turning point becomes **1.0.0** (v1.00). The old
 `0.0.2`–`0.0.6` trail and the first-kernel `0.1` tag are history; this
 line started as a naming reset at `0.1.0`, not a rollback.
 
-## What 0.1.9 does
+## What 0.2.0 does
 
 - Boots on that AM3+ board (legacy BIOS, VGA or GTX 1050). **PS/2 keyboard
   only.** `.img` boot takes EHCI for the stick, which kills BIOS USB-legacy,
@@ -25,79 +25,67 @@ line started as a naming reset at `0.1.0`, not a rollback.
   real PS/2 keyboard into the PS/2 port.
 - Plays through the onboard HD Audio jack (SB710 + ALC662)
 - Persistent **FAT32** on the boot USB (EHCI mass storage). **C:** is the
-  64 MiB system volume (Limine, kernel, stock `audio/`). **D:** is the
-  leftover data volume (created on first mount, never reformatted when you
-  `update`). **E:** is a second USB stick if `mount` finds one. `/os` is
-  still C:. `C:/README.TXT` says everything on C: is temporary until the
-  next update — keep lasting files on D:. `cd C:` / `cd D:` / `C:` switch
-  volumes. USB I/O is one
-  512-byte sector at a time so 4 KiB data-volume clusters work on the SB710.
+  64 MiB system volume (Limine, kernel, stock `audio/`). **D:** is leftover
+  space on the same stick. If that leftover **already looks like FAT32**
+  (an old D: after a 64 MiB image flash wiped the MBR slot), 0.2.0 **mounts
+  it and writes type 0x0C back** — it does not skip it and it does not
+  format it. Fresh leftover is still mkfs'd once. **E:** is a second USB
+  if `mount` finds one. `/os` is C:. Keep lasting files on D:.
+- USB MSC recovers after a failed sector (BOT reset) so storage does not
+  stay dead until reboot. I/O is still one 512-byte sector at a time.
 - **Updates without wiping D:** do not raw-flash a new `audios.img` over
-  the whole stick (that rewrites the MBR and drops partition 2). Either
-  `update E:/boot/kernel` / `update D:/boot/kernel` (copies onto C: only)
-  or on a host write partition 1 in place:
-  Windows `.\tools\update-system.ps1 -Elevate` (replaces
-  `flash-latest-release.ps1` for day-to-day bumps), or
-  `python3 tools/update_system.py /dev/sdX audios.img`. First install is
-  still a full image flash (`flash-latest-release.ps1 -Full`).
-- `edit <file>` wraps long lines and redraws dirty cells only (`^O` save,
-  `^X` quit). PgUp / PgDn on the console move **one line**; hold for a
-  slow continuous scroll. Full-screen clears are no longer used for every
-  editor key.
-- `tetris [level]` is NES-rules falling blocks. **Level 19–28 staying at
-  2G (then 1G at 29) is NES**, not a cap we invented. High scores live on
-  `D:/tetris.scr` (`tetris scores`).
-- `audio help` lists audio / tone / play. `shutdown` tries ACPI S5 / QEMU
-  power-off. `type <file>` dumps a file. `cat` is an ASCII cat (not in
-  help).
+  the whole stick. `update`, `update-system.ps1`, or `update_system.py`
+  write C: only. First install is still a full image flash.
+- `help` is alphabetical. `help <command>` prints parameters. `cat` is
+  only an ASCII cat (`type` dumps files).
+- Line editor: shift-select highlight, Ctrl-C copy, Ctrl-V paste,
+  Ctrl-Backspace (or Ctrl-W) delete word. PgUp depth is 400 lines.
+- `tetris [level]` is NES-rules falling blocks with **2×2 cells**. The OS
+  owns the paint frame (quiet serial, skip unchanged cells). Hold
+  left/right is NES DAS (16 then every 6). Scores: `D:/tetris.scr`, else C:.
+- Live meters top-right: volume, limiter flag, line-out / mic / line-in
+  bars. **F11 / F12** volume, **F5** play/pause, **F6** stop.
+- `audio vol`, `audio limiter on|off` (on for headphones), `audio gain`
+  for analog input. `rec mic` / `rec line` on the ALC662 jacks (QEMU's
+  hda-output has no ADC).
+- Current clip: `use name`, then `proc gain 0.5`, `gain 0.5`, `play`.
+  `slice` previews. `undo` / `redo`. `mark a|b` / `cue` for accurate cuts.
+  `seq bpm` / `seq play 3` / `seq play bar 2`.
+- Session: `D:/session.aos` (magic `AOS1`). Boot asks y/n for 2 s (default
+  n). `D:/autoexec.aos` or `C:/autoexec.aos` runs if it starts with `AOS1`.
+- `shutdown` tries QEMU ports and ACPI S5 on PM1a **and** PM1b. If the
+  board stays on, control returns to the shell — do not yank the cord.
 - Limine is asked for `1920x1080x32`; it picks the closest mode the GPU
-  or VBIOS actually has. The kernel sizes the text grid from that
-  framebuffer (onboard VGA or a GTX 1050). We cannot reprogram the GPU
-  ourselves — if you want HDMI, set the BIOS to the 1050, not the IGP.
-- Named **clips** in RAM: load/save WAV, slice, join, mix, reverse, gain,
-  filters, delay, pitch/stretch (integer resample), a non-grid sequencer
-- `play clip` or `play file.wav` (`loop` until `stop`)
-- `rec` captures the **output mix** (what you hear) so you can process and
-  save without extra steps. Analog jack-in is not a separate ADC path yet.
-- `tone` with no duration keeps playing until `stop`
-- Up / Down arrows recall previous commands (PowerShell-style)
-- Console scroll stays in RAM so the picture does not hitch and audio
-  does not underrun
-- Falls back to Intel ICH AC97 when that is the only controller (QEMU)
+  or VBIOS actually has (onboard VGA is often 1024×768). The kernel sizes
+  the text grid from that framebuffer.
 
 ```
 audiOS> load /os/audio/test.wav a
-audiOS> proc a gain 0.8 lpf 4000 delay 180 0.35 0.2
+audiOS> use a
+audiOS> proc gain 0.8 lpf 4000 delay 180 0.35 0.2
 audiOS> save a wet.wav
-audiOS> play a
+audiOS> play
 ```
 
-Plug speakers or headphones into the **green rear jack**.
+Plug speakers or headphones into the **green rear jack**. Headphones: 
+`audio limiter on`. Speakers can leave it off.
 
 ## Commands
 
-`help` `clear` `version` `cpu` `mem` `reboot` `shutdown`
+`help` lists every command alphabetically. `help <command>` is the
+parameter page. Highlights:
 
-`audio` `audio help` `audio devices` `audio info` `audio set` `audio status` `audio test`
+`audio vol|limiter|gain|pause` `tone` `play` `stop` `music`
 
-`tone sine|square|saw|noise|silence [freq] [amp] [duration]`
+`load` `save` `use` `clip` `slice` `mark` `cue` `undo` `redo` `proc`
+`seq bpm|play` `rec` `rec mic` `rec line`
 
-`play <clip|file.wav> [loop|n]` `stop`
-
-`music` — full clip/DSP list. Highlights:
-
-`load` `save` `clips` `clip` `new` `sample` `slice` `join` `mix` `repeat`
-`reverse` `gain` `norm` `fade` `pitch` `stretch` `rate` `crush` `decimate`
-`distort` `noise` `seed` `lpf` `hpf` `bpf` `delay` `pan` `vary` `proc`
-`seq` `rec` `drop` `script`
-
-`ls` `cd` `pwd` `mkdir` `rm` `cp` `mv` `type` `touch` `info` `storage` `mount`
-`drives` `update` `edit` `tetris`
+`ls` `cd` `pwd` `mkdir` `rm` `cp` `mv` `type` `touch` `info` `storage`
+`mount` `drives` `update` `edit` `tetris` `script` `reboot` `shutdown`
 
 `cd C:` `cd D:` `cd E:` — system / data / extra USB. `/os` is C:.
 
-Up / Down: previous / next command. PgUp / PgDn: one line of scrollback
-(hold for continuous). `type` dumps a file. `tetris scores` shows the board.
+Keys: Up/Down history, PgUp/PgDn scroll, F5/F6 transport, F11/F12 volume.
 
 `pitch` resamples (length follows pitch) unless you add `keep`.
 `stretch` changes length. DSP is integer/fixed-point (no FPU on this kernel).
@@ -137,7 +125,7 @@ Limine treated the volume as FAT16), not the flasher.
 
 That image is MBR + two FAT32 partitions after first boot: **C:** system
 (the 64 MiB image) and **D:** data. Later kernel bumps — **do not
-full-flash again**. On Windows:
+full-flash again** if you want to keep D:. On Windows:
 
 ```
 .\tools\update-system.ps1 -Elevate
@@ -150,7 +138,8 @@ now refuses a stick that already has D: unless you pass `-Full`. Linux:
 treats USB as a hard disk, and Limine then cannot see an ISO9660 stage 3.
 
 On the Asrock: USB in a rear 2.0 port, PS/2 keyboard, VGA monitor,
-**F11** boot menu.
+**F11** boot menu. IGP VGA is typically 1024×768 from VBIOS; a GTX 1050
+can take the 1920×1080 request.
 
 `make run` uses QEMU's HDA codec plus a USB FAT disk (`audios-fs.img`).
 
