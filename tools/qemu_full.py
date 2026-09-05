@@ -87,6 +87,8 @@ def main() -> int:
 			raise RuntimeError(f"banner missing {ver}\n{text}")
 		if "mounted FAT32" not in text and "USB MSC" not in text:
 			raise RuntimeError(f"FAT did not mount\n{text}")
+		if "leftover FAT32" not in text and "mounted FAT32 data" not in text:
+			raise RuntimeError(f"D: leftover FAT32 was not mounted\n{text}")
 		checked.append("boot banner + FAT mount")
 
 		help = expect(master, proc, "help", ("tone", "play", "music", "storage", "reboot", "shutdown", "script", "edit", "tetris", "type", "drives", "update", "audio help"))
@@ -152,6 +154,8 @@ def main() -> int:
 		expect(master, proc, "cat", ("o.o", "> ^ <"))
 		expect(master, proc, "drives", ("C:", "D:"))
 		expect(master, proc, "audio help", ("audio help", "tone"))
+		expect(master, proc, "help vol", ("volume", "F11"))
+		expect(master, proc, "help seq", ("bpm", "bar"))
 		expect(master, proc, "tetris scores", ("tetris scores", "2G"))
 		expect(master, proc, "storage", ("FAT32", "free", "data"))
 		expect(master, proc, "mount", ("FAT32", "C:", "D:"))
@@ -225,11 +229,21 @@ def main() -> int:
 		expect(master, proc, "seq list", ("seq",))
 		expect(master, proc, "seq len 80ms", ("seq len",))
 		expect(master, proc, "seq render pat", ("render",), 10.0)
+		expect(master, proc, "seq bpm 140", ("seq bpm 140",))
 		send(master, "seq play")
 		wait_for(master, proc, "playing seq", 10.0)
 		drain(master, 0.25)
 		send(master, "stop")
 		wait_for(master, proc, PROMPT, 5.0)
+		send(master, "seq play 1")
+		wait_for(master, proc, "playing seq from", 10.0)
+		drain(master, 0.2)
+		send(master, "stop")
+		wait_for(master, proc, PROMPT, 5.0)
+		expect(master, proc, "use s", ("current clip",))
+		expect(master, proc, "proc gain 0.9", ("proc",), 8.0)
+		expect(master, proc, "undo", ("undo",))
+		expect(master, proc, "rec mic cap 20ms", ("no analog",))
 		expect(master, proc, "rec mix 60ms", ("recording mix",))
 		drain(master, 0.25)
 		expect(master, proc, "clip mix", ("frames",))
@@ -237,6 +251,7 @@ def main() -> int:
 		expect(master, proc, "drop pat", ("dropped",))
 		expect(master, proc, "drop mix", ("dropped",))
 		expect(master, proc, "drop s", ("dropped",))
+		expect(master, proc, "drop cap", ("dropped",))
 		checked.append("seq/rec/drop/seed/noise")
 
 		send(master, "cpu")
@@ -250,9 +265,9 @@ def main() -> int:
 		checked.append("history Up")
 
 		send(master, "tetris 0")
-		text = wait_for(master, proc, "NES tetris", 8.0)
-		if "LEVEL" not in text:
-			text += wait_for(master, proc, "LEVEL", 8.0)
+		# One serial line: "NES tetris  LEVEL n  (Q quit)" then tty_clear.
+		# Wait for the last token so a mid-line read cannot miss LEVEL.
+		wait_for(master, proc, "Q quit", 8.0)
 		send_raw(master, b"q")
 		wait_for(master, proc, PROMPT, 8.0)
 		checked.append("tetris start/quit")

@@ -42,4 +42,33 @@ unsigned hda_service(void (*fill)(int16_t *dst, uint32_t frames));
 /** Hardware underrun counter since last start. */
 uint32_t hda_underruns(void);
 
+/** Output amplifier 0–100. Headphones often want the software limiter too. */
+void hda_set_volume(unsigned pct);
+unsigned hda_volume(void);
+
+/** True if a mic or line-in ADC path was found. */
+int hda_has_capture(void);
+
+/** 1 = mic jack, 0 = line in. */
+int hda_select_input(int mic);
+
+/** 1 after `hda_select_input(1)`. */
+int hda_mic_selected(void);
+
+/** Input analog gain 0–100. */
+void hda_set_ingain(unsigned pct);
+unsigned hda_ingain(void);
+
+/** Peak of the last capture period (0–32767) for the selected input. */
+unsigned hda_peak_in(void);
+
+/** Pull analog capture into `dst` (stereo s16 at the hardware rate). */
+uint32_t hda_cap_take(int16_t *dst, uint32_t frames);
+
+/** Frames written into the buffer armed by `hda_cap_take`. */
+uint32_t hda_cap_filled(void);
+
+/** Pump input DMA and meter peaks (safe when playback is stopped). */
+void hda_cap_poll(void);
+
 #endif

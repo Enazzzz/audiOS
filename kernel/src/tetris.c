@@ -1,5 +1,6 @@
 #include "tetris.h"
 #include "audio.h"
+#include "fat.h"
 #include "fs.h"
 #include "kbd.h"
 #include "klib.h"
@@ -17,7 +18,8 @@
 #define CLEAR_FRAMES	20
 #define FRAME_MS	16u
 #define SCORE_MAX	8
-#define SCORE_PATH	"D:/tetris.scr"
+#define CELL_W		4
+#define CELL_H		2
 
 /* Nintendo Rotation System colours (VGA). */
 #define COL_BG		0x101014u
@@ -171,13 +173,20 @@ static unsigned grav_frames(unsigned lv)
 	return low[lv];
 }
 
-/** Load D:/tetris.scr (name score lines level per line). */
+/** Load D:/tetris.scr then C:/tetris.scr (D: may be missing after a 64 MiB flash). */
+static int scores_read_path(const char *path, char *raw, uint32_t cap, uint32_t *n)
+{
+	*n = 0;
+	return fs_read_file(path, raw, cap, n) && *n > 0;
+}
+
 static void scores_load(void)
 {
 	nscore = 0;
 	char raw[512];
 	uint32_t n = 0;
-	if (!fs_read_file(SCORE_PATH, raw, sizeof(raw) - 1u, &n) || n == 0) {
+	if (!scores_read_path("D:/tetris.scr", raw, sizeof(raw) - 1u, &n)
+		&& !scores_read_path("C:/tetris.scr", raw, sizeof(raw) - 1u, &n)) {
 		return;
 	}
 	raw[n] = '\0';
@@ -247,7 +256,7 @@ static void scores_save(void)
 		memcpy(raw + o, line, L);
 		o += (unsigned)L;
 	}
-	(void)fs_write_file(SCORE_PATH, raw, o);
+	(void)fs_write_file(fat_vol_ready(FAT_VOL_USR) ? "D:/tetris.scr" : "C:/tetris.scr", raw, o);
 }
 
 /** True if this run belongs on the board. */
@@ -292,7 +301,7 @@ static void score_insert(const char *name)
 static void scores_print(void)
 {
 	scores_load();
-	tty_puts("NES tetris scores (D:/tetris.scr)\n");
+	tty_puts("NES tetris scores (D:/tetris.scr, else C:)\n");
 	if (nscore == 0) {
 		tty_puts("  (empty)\n");
 	} else {
@@ -585,7 +594,8 @@ static int arrow_held(int key)
 /** Remember a serial arrow as held for a couple of frames (no key-up on COM1). */
 static void ser_hold(int key)
 {
-	uint64_t until = pit_ticks() + 40u;
+	/* Long enough for NES DAS (16 frames) to engage over serial. */
+	uint64_t until = pit_ticks() + 280u;
 	if (key == KBD_LEFT) {
 		ser_left_until = until;
 	} else if (key == KBD_RIGHT) {
@@ -625,6 +635,24 @@ static void put_field(unsigned col, unsigned row, uint32_t n, unsigned width, ui
 	put_str_pad(col, row, tmp, width, rgb);
 }
 
+/** One well cell is a 2×2 of `[]` glyphs (4 columns × 2 rows). */
+static void paint_block(unsigned col, unsigned row, char a, char b, uint32_t rgb)
+{
+	unsigned cols = tty_cols();
+	unsigned rows = tty_rows();
+	for (unsigned dy = 0; dy < (unsigned)CELL_H; dy++) {
+		for (unsigned dx = 0; dx < 2u; dx++) {
+			unsigned c = col + dx * 2u;
+			unsigned r = row + dy;
+			if (c + 1u >= cols || r >= rows) {
+				continue;
+			}
+			tty_put_xy(c, r, a, rgb);
+			tty_put_xy(c + 1u, r, b, rgb);
+		}
+	}
+}
+
 /** Colour for a well cell id (0 empty, 1–7 locked kinds). */
 static uint32_t cell_rgb(uint8_t id)
 {
@@ -638,23 +666,31 @@ static uint32_t cell_rgb(uint8_t id)
 	return kind_rgb[k];
 }
 
-/** Paint HUD, well, active piece, and next preview. */
+/** Glyph origin of well cell (x,y); border uses x,y in -1..WELL. */
+static void well_cell_pos(int x, int y, unsigned *col, unsigned *row)
+{
+	*col = (unsigned)(well_x + (x + 1) * CELL_W);
+	*row = (unsigned)(well_y + (y + 1) * CELL_H);
+}
+
+/** Paint HUD, well, active piece, and next preview. OS owns the frame. */
 static void paint(void)
 {
 	unsigned cols = tty_cols();
 	unsigned rows = tty_rows();
+	(void)cols;
 	put_str(0, 0, "NES tetris", TTY_COL_ACCENT);
-	put_str(12, 0, "  X/Up CW  Z CCW  arrows  Down soft  P pause  Q quit", COL_DIM);
+	put_str_pad(12, 0, "  X/Up CW  Z CCW  arrows  Down soft  P pause  Q quit", 52, COL_DIM);
 	put_str(0, 1, "LEVEL ", COL_HUD);
 	put_field(6, 1, level, 4, TTY_COL_ACCENT);
 	put_str(11, 1, "SCORE ", COL_HUD);
 	put_field(17, 1, score, 8, TTY_COL_ACCENT);
 	put_str(26, 1, "LINES ", COL_HUD);
 	put_field(32, 1, lines, 6, TTY_COL_ACCENT);
-	put_str_pad(0, 2, "19-28 stay 2G, 29 is 1G (NES)", 40, COL_DIM);
+	put_str_pad(0, 2, "19-28 stay 2G, 29 is 1G (NES)  2x2 cells", 48, COL_DIM);
 
-	if (well_x < 1) {
-		well_x = 2;
+	if (well_x < 0) {
+		well_x = 0;
 	}
 	if (well_y < 2) {
 		well_y = 3;
@@ -662,14 +698,10 @@ static void paint(void)
 
 	for (int y = -1; y <= WELL_H; y++) {
 		for (int x = -1; x <= WELL_W; x++) {
-			unsigned col = (unsigned)(well_x + (x + 1) * 2);
-			unsigned row = (unsigned)(well_y + y + 1);
-			if (col + 1 >= cols || row >= rows) {
-				continue;
-			}
+			unsigned col, row;
+			well_cell_pos(x, y, &col, &row);
 			if (x < 0 || x >= WELL_W || y < 0 || y >= WELL_H) {
-				tty_put_xy(col, row, '[', COL_BORDER);
-				tty_put_xy(col + 1u, row, ']', COL_BORDER);
+				paint_block(col, row, '[', ']', COL_BORDER);
 				continue;
 			}
 			uint8_t id = well[y][x];
@@ -681,8 +713,7 @@ static void paint(void)
 				a = '[';
 				b = ']';
 			}
-			tty_put_xy(col, row, a, rgb);
-			tty_put_xy(col + 1u, row, b, rgb);
+			paint_block(col, row, a, b, rgb);
 		}
 	}
 
@@ -694,14 +725,15 @@ static void paint(void)
 			if (bx < 0 || bx >= WELL_W || by < 0 || by >= WELL_H) {
 				continue;
 			}
-			unsigned col = (unsigned)(well_x + (bx + 1) * 2);
-			unsigned row = (unsigned)(well_y + by + 1);
-			tty_put_xy(col, row, '[', kind_rgb[cur]);
-			tty_put_xy(col + 1u, row, ']', kind_rgb[cur]);
+			unsigned col, row;
+			well_cell_pos(bx, by, &col, &row);
+			paint_block(col, row, '[', ']', kind_rgb[cur]);
 		}
 	}
 
-	put_str((unsigned)(well_x + WELL_W * 2 + 6), (unsigned)well_y, "NEXT", COL_HUD);
+	unsigned nx = (unsigned)(well_x + (WELL_W + 2) * CELL_W + 2);
+	unsigned ny = (unsigned)well_y;
+	put_str(nx, ny, "NEXT", COL_HUD);
 	{
 		int occ[4][4];
 		memset(occ, 0, sizeof(occ));
@@ -714,35 +746,37 @@ static void paint(void)
 		}
 		for (int y = 0; y < 4; y++) {
 			for (int x = 0; x < 4; x++) {
-				unsigned col = (unsigned)(well_x + WELL_W * 2 + 6 + x * 2);
-				unsigned row = (unsigned)(well_y + 2 + y);
+				unsigned col = nx + (unsigned)x * (unsigned)CELL_W;
+				unsigned row = ny + 2u + (unsigned)y * (unsigned)CELL_H;
 				if (occ[y][x]) {
-					tty_put_xy(col, row, '[', kind_rgb[nxt]);
-					tty_put_xy(col + 1u, row, ']', kind_rgb[nxt]);
+					paint_block(col, row, '[', ']', kind_rgb[nxt]);
 				} else {
-					tty_put_xy(col, row, ' ', COL_BG);
-					tty_put_xy(col + 1u, row, ' ', COL_BG);
+					paint_block(col, row, ' ', ' ', COL_BG);
 				}
 			}
 		}
 	}
 
+	unsigned mid_row = (unsigned)(well_y + (WELL_H / 2) * CELL_H);
 	if (state == ST_PAUSE) {
-		put_str_pad((unsigned)well_x, (unsigned)(well_y + WELL_H / 2), "PAUSED", 20, TTY_COL_AUDIO);
+		put_str_pad((unsigned)well_x, mid_row, "PAUSED", 20, TTY_COL_AUDIO);
 	} else if (state == ST_OVER) {
-		put_str_pad((unsigned)well_x, (unsigned)(well_y + WELL_H / 2), "GAME OVER  Q quit", 20, TTY_COL_ERR);
-		put_str_pad((unsigned)well_x, (unsigned)(well_y + WELL_H / 2 + 1), "", 20, COL_BG);
+		put_str_pad((unsigned)well_x, mid_row, "GAME OVER  Q quit", 20, TTY_COL_ERR);
+		put_str_pad((unsigned)well_x, mid_row + 1u, "", 20, COL_BG);
 	} else if (state == ST_NAME) {
-		put_str_pad((unsigned)well_x, (unsigned)(well_y + WELL_H / 2), "HIGH SCORE  name:", 20, TTY_COL_AUDIO);
-		put_str_pad((unsigned)well_x, (unsigned)(well_y + WELL_H / 2 + 1), name_in, 4, TTY_COL_ACCENT);
-		put_str((unsigned)well_x + 4u, (unsigned)(well_y + WELL_H / 2 + 1), "  Enter save", COL_DIM);
+		put_str_pad((unsigned)well_x, mid_row, "HIGH SCORE  name:", 20, TTY_COL_AUDIO);
+		put_str_pad((unsigned)well_x, mid_row + 1u, name_in, 4, TTY_COL_ACCENT);
+		put_str((unsigned)well_x + 4u, mid_row + 1u, "  Enter save", COL_DIM);
 	} else {
-		put_str_pad((unsigned)well_x, (unsigned)(well_y + WELL_H / 2), "", 20, COL_BG);
-		put_str_pad((unsigned)well_x, (unsigned)(well_y + WELL_H / 2 + 1), "", 20, COL_BG);
+		put_str_pad((unsigned)well_x, mid_row, "", 20, COL_BG);
+		put_str_pad((unsigned)well_x, mid_row + 1u, "", 20, COL_BG);
 	}
 	{
-		unsigned sc = (unsigned)(well_x + WELL_W * 2 + 6);
-		unsigned sr = (unsigned)well_y + 8u;
+		unsigned sc = nx;
+		unsigned sr = ny + 12u;
+		if (sr + 9u >= rows) {
+			sr = (rows > 9u) ? rows - 9u : 0;
+		}
 		put_str(sc, sr, "SCORES", COL_HUD);
 		for (unsigned i = 0; i < 8; i++) {
 			char line[40];
@@ -956,8 +990,26 @@ static void game_init(unsigned start)
 	ser_left_until = 0;
 	ser_right_until = 0;
 	ser_down_until = 0;
-	well_x = 2;
+	well_x = 0;
 	well_y = 3;
+	{
+		unsigned cols = tty_cols();
+		unsigned rows = tty_rows();
+		int gw = (WELL_W + 2) * CELL_W;
+		int gh = (WELL_H + 2) * CELL_H;
+		int nx = ((int)cols - gw) / 2;
+		if (nx < 0) {
+			nx = 0;
+		}
+		well_x = nx;
+		well_y = 3;
+		if (well_y + gh > (int)rows && rows > (unsigned)gh) {
+			well_y = (int)rows - gh;
+		}
+		if (well_y < 2) {
+			well_y = 2;
+		}
+	}
 	rng_state = (uint32_t)pit_ticks();
 	if (rng_state == 0) {
 		rng_state = 0xA5A5u;
@@ -977,9 +1029,14 @@ void tetris_cmd(int argc, char **argv)
 	}
 	unsigned start = parse_level(argc, argv);
 	scores_load();
+	/* Serial tests (and the user) need a needle; cell paints are quiet. */
+	tty_printf("NES tetris  LEVEL %u  (Q quit)\n", start);
+	audio_hud_set(0);
 	tty_clear();
 	game_init(start);
+	tty_frame_begin();
 	paint();
+	tty_frame_end();
 	uint64_t next_frame = pit_ticks();
 	while (running) {
 		int c;
@@ -992,11 +1049,10 @@ void tetris_cmd(int argc, char **argv)
 			audio_service();
 		}
 		uint64_t now = pit_ticks();
-		if (now >= next_frame) {
+		int steps = 0;
+		while (now >= next_frame && steps < 5) {
 			next_frame += FRAME_MS;
-			if (now > next_frame + 80u) {
-				next_frame = now + FRAME_MS;
-			}
+			steps++;
 			switch (state) {
 			case ST_PLAY:
 				play_frame();
@@ -1011,11 +1067,17 @@ void tetris_cmd(int argc, char **argv)
 				break;
 			}
 		}
+		if (now > next_frame + 80u) {
+			next_frame = now + FRAME_MS;
+		}
 		if (dirty) {
+			tty_frame_begin();
 			paint();
+			tty_frame_end();
 		}
 		audio_service();
 		__asm__ volatile ("pause");
 	}
 	tty_clear();
+	audio_hud_set(1);
 }

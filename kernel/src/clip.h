@@ -33,4 +33,17 @@ int music_is_verb(const char *verb);
 /** Short music help (also printed by `music`). */
 void music_help(void);
 
+/** Clip last loaded / `use`d, or NULL. */
+struct clip *clip_current(void);
+const char *clip_current_name(void);
+void clip_use(const char *name);
+
+/** Undo / redo the last clip-mutating op (one snapshot). */
+int clip_undo(void);
+int clip_redo(void);
+
+/** Session helpers. */
+uint32_t seq_get_bpm(void);
+void seq_set_bpm(uint32_t bpm);
+
 #endif

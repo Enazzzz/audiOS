@@ -2,6 +2,7 @@
 #define AUDIOS_FS_H
 
 #include <stdbool.h>
+#include <stddef.h>
 #include <stdint.h>
 
 /**
@@ -39,5 +40,11 @@ bool fs_write_file(const char *path, const void *buf, uint32_t size);
 
 /** Shared I/O buffer used by WAV load/save. */
 uint8_t *fs_iobuf(uint32_t *cap);
+
+/** Absolute `C:/path` of the current directory. */
+void fs_getcwd(char *out, size_t n);
+
+/** Change directory; returns 0 on failure (prints nothing). */
+int fs_chdir(const char *path);
 
 #endif

@@ -344,9 +344,16 @@ const char *fs_error(void)
 void fs_cmd_mount(void)
 {
 	if (fs_ready()) {
+		if (!fat_vol_ready(FAT_VOL_USR)) {
+			fat_mount_data(&disk);
+		}
 		tty_printf("C: %s FAT32 system '%s'\n", disk.name, fat_vol_name(FAT_VOL_SYS));
 		if (fat_vol_ready(FAT_VOL_USR)) {
 			tty_printf("D: %s FAT32 data '%s'\n", disk.name, fat_vol_name(FAT_VOL_USR));
+		} else {
+			tty_set_color(TTY_COL_DIM);
+			tty_puts("D: not mounted (leftover USB was empty or not FAT32)\n");
+			tty_set_color(TTY_COL_FG);
 		}
 		if (extra.sectors == 0) {
 			(void)usb_msc_scan_extra(&extra);
@@ -375,6 +382,34 @@ void fs_cmd_pwd(void)
 	char shown[FAT_PATH_MAX];
 	format_abs(cur_drive, drive_cwd[cur_drive], shown, sizeof(shown));
 	tty_printf("%s\n", shown);
+}
+
+void fs_getcwd(char *out, size_t n)
+{
+	if (out == NULL || n == 0) {
+		return;
+	}
+	format_abs(cur_drive, drive_cwd[cur_drive], out, n);
+}
+
+int fs_chdir(const char *path)
+{
+	char abs[FAT_PATH_MAX];
+	char fp[FAT_PATH_MAX];
+	int drv = 0;
+	struct fat_info inf;
+	if (path == NULL || !abs_path(path, abs, sizeof(abs))) {
+		return 0;
+	}
+	if (!split_abs(abs, &drv, fp, sizeof(fp)) || !drive_ready(drv)) {
+		return 0;
+	}
+	if (!fs_stat(abs, &inf) || inf.kind != FAT_DIR) {
+		return 0;
+	}
+	cur_drive = drv;
+	ksnprintf(drive_cwd[drv], sizeof(drive_cwd[drv]), "%s", fp);
+	return 1;
 }
 
 void fs_cmd_cd(int argc, char **argv)

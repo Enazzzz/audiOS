@@ -336,6 +336,7 @@ void edit_cmd(int argc, char **argv)
 	buf[len] = '\0';
 	running = 1;
 	kbd_flush_queue();
+	audio_hud_set(0);
 	tty_clear();
 	tty_cursor_hide();
 	paint();
@@ -353,4 +354,5 @@ void edit_cmd(int argc, char **argv)
 		__asm__ volatile ("pause");
 	}
 	tty_clear();
+	audio_hud_set(1);
 }
