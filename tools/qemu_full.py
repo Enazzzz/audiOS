@@ -66,7 +66,9 @@ def boot_iso(iso: Path, fs_img: Path, capture: Path):
 		"-drive",
 		f"if=none,id=fd0,file={Path('audios-fdc.flp')},format=raw",
 		"-device",
-		"isa-fdc,driveA=fd0",
+		"isa-fdc,id=fdc0,fdtypeA=144",
+		"-device",
+		"floppy,unit=0,drive=fd0,drive-type=144",
 	]
 	master, slave = pty.openpty()
 	attrs = termios.tcgetattr(master)
