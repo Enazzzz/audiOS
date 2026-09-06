@@ -300,12 +300,12 @@ int fdc_sense_drive(uint8_t *st3)
 {
 	uint8_t b;
 	int was_on = motor_is_on;
-	uint8_t mot = (uint8_t)(0x10u << unit);
-	dor = (uint8_t)(DOR_RESET | DOR_DMA | mot | unit);
-	outb(FDC_DOR, dor);
-	if (!was_on) {
-		fdc_sleep(80);
-	}
+
+	/*
+	 * Slim 3.5" drives (Epson SMD-300) power the WP photointerrupter
+	 * from MOTOR ON. An 80 ms blip left ST3.6 set on a writable disk.
+	 */
+	motor_on();
 	if (!fifo_put(CMD_SENSEDRV) || !fifo_put(unit) || !fifo_get(&b)) {
 		if (!was_on) {
 			motor_off();
@@ -347,21 +347,14 @@ static int read_result(uint8_t *st0)
 	return 1;
 }
 
-/** True if the drive is reporting a write-protected disk (ST3 bit 6). */
-static int check_wp(void)
-{
-	uint8_t st3 = 0;
-	if (fdc_sense_drive(&st3) && (st3 & 0x40)) {
-		fail("write protected (cover the 3.5\" tab hole)");
-		return 1;
-	}
-	return 0;
-}
-
+/**
+ * ST1 bit 1 (NW) is the FDC refusing a write because the WP pin is
+ * asserted. ST3 bit 6 is only a preview of that pin and can lie.
+ */
 static void fail_rw(int write, uint8_t st0)
 {
 	if (last_st1 & 0x02) {
-		fail("write protected (cover the 3.5\" tab hole)");
+		fail("write protected (FDC pin; right-corner tab, not left HD hole)");
 		return;
 	}
 	ksnprintf(err, sizeof(err), "%s st0=0x%02x st1=0x%02x",
@@ -529,6 +522,7 @@ static uint8_t hu(uint8_t head)
 	return (uint8_t)((head << 2) | unit);
 }
 
+/** Read or write one sector. ST3 WP is advisory; ST1 NW is the real refusal. */
 static int xfer(uint32_t lba, int write)
 {
 	uint8_t c, h, s, st0 = 0;
@@ -540,9 +534,6 @@ static int xfer(uint32_t lba, int write)
 	}
 	lba_chs(lba, &c, &h, &s);
 	if (!ready_drive()) {
-		return 0;
-	}
-	if (write && check_wp()) {
 		return 0;
 	}
 	for (try = 0; try < 3u; try++) {
@@ -594,10 +585,6 @@ int fdc_format_disk(void (*idle)(void))
 		return 0;
 	}
 	if (!recalibrate()) {
-		motor_off();
-		return 0;
-	}
-	if (check_wp()) {
 		motor_off();
 		return 0;
 	}

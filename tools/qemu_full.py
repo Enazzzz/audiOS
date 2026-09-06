@@ -110,7 +110,8 @@ def main() -> int:
 		expect(master, proc, "notacommand", ("no such command",))
 		checked.append("help/clear/version/cpu/mem/unknown")
 
-		expect(master, proc, "floppy", ("1.44", "floppy"))
+		# QEMU's scratch image is writable; ST3 must not always claim wp.
+		expect(master, proc, "floppy", ("1.44", "floppy", "writable"))
 		checked.append("floppy status")
 		# Recalibrate + format every track (the path that was "irq timeout").
 		expect(master, proc, "floppy format", ("format ok",), timeout=90.0)

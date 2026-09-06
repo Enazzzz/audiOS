@@ -31,7 +31,13 @@ void fdc_motor_off(void);
 /** Selected FDC unit (0 or 1). */
 unsigned fdc_unit(void);
 
-/** Sense Drive Status (ST3). Spins the motor briefly if it is off. */
+/**
+ * Sense Drive Status (ST3). Spins the motor like a real I/O so the
+ * laptop-drive WP LED is powered; 80 ms was not enough on the SMD-300.
+ * ST3 bit 6 is the WP *pin*, not a camera on the tab. It can stay set
+ * with the hole covered. Callers must not abort writes on this bit —
+ * FORMAT/WRITE return ST1 NW when the FDC itself refuses.
+ */
 int fdc_sense_drive(uint8_t *st3);
 
 const char *fdc_error(void);
