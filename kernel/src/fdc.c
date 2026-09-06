@@ -200,6 +200,7 @@ static void wait_seek(uint32_t ms)
 
 	while (pit_ticks() < until) {
 		uint64_t slice = pit_ticks() + 1u;
+		uint64_t elapsed;
 		while (pit_ticks() < slice && pit_ticks() < until) {
 			if (irq_seen) {
 				irq_seen = 0;
@@ -209,7 +210,20 @@ static void wait_seek(uint32_t ms)
 			msr = inb(FDC_MSR);
 			if (msr & act) {
 				saw_act = 1;
-			} else if (saw_act && (pit_ticks() - start) >= 50u) {
+			} else if (saw_act) {
+				irq_seen = 0;
+				err[0] = '\0';
+				return;
+			}
+			elapsed = pit_ticks() - start;
+			/*
+			 * QEMU often never raises ACTA and may not IRQ; the
+			 * seek is already done (RQM, idle). Do not SIS at
+			 * 2 ms — that locked the FX chip (0x80). 40 ms is
+			 * long enough for a real ACTA to appear.
+			 */
+			if (!saw_act && elapsed >= 40u
+				&& (msr & (MSR_RQM | MSR_DIO | MSR_CB | act)) == MSR_RQM) {
 				irq_seen = 0;
 				err[0] = '\0';
 				return;
