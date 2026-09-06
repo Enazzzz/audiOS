@@ -31,16 +31,19 @@
  * (Sense Drive Status can stay set with the hole covered). Spin the motor
  * 500 ms before sensing so the SMD-300 WP LED is on. Fail only on ST1 NW.
  * 3.5" HD has two holes: left = density (always open), right = WP tab.
+ * 0.4.0: Audio Link — 48 kHz 16-bit L+R Manchester modem between two
+ * machines (line-out to line-in). Terminal share/view, remote keys and
+ * commands, file send with resume. `link test` loopback for QEMU.
  *
  * Bump these three macros and AUDIOS_VERSION_STRING / AUDIOS_BANNER
  * together. Tests read AUDIOS_VERSION_STRING from this file.
  */
 #define AUDIOS_NAME		"audiOS"
 #define AUDIOS_VERSION_MAJOR	0
-#define AUDIOS_VERSION_MINOR	3
-#define AUDIOS_VERSION_PATCH	4
-#define AUDIOS_VERSION_STRING	"0.3.4"
-#define AUDIOS_BANNER		"audiOS 0.3.4"
+#define AUDIOS_VERSION_MINOR	4
+#define AUDIOS_VERSION_PATCH	0
+#define AUDIOS_VERSION_STRING	"0.4.0"
+#define AUDIOS_BANNER		"audiOS 0.4.0"
 #define AUDIOS_AUDIO_RATE	96000u
 #define AUDIOS_AUDIO_BITS	24u
 #define AUDIOS_AUDIO_CHANNELS	2u

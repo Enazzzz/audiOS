@@ -1,4 +1,5 @@
 #include "shell.h"
+#include "alink.h"
 #include "edit.h"
 #include "tetris.h"
 #include "audio.h"
@@ -671,6 +672,8 @@ static void shell_dispatch(char *cmd)
 		tetris_cmd(argc, argv);
 	} else if (strcmp(argv[0], "floppy") == 0) {
 		floppy_cmd(argc, argv);
+	} else if (strcmp(argv[0], "link") == 0) {
+		alink_cmd(argc, argv);
 	} else if (strcmp(argv[0], "reboot") == 0) {
 		session_save();
 		system_reboot();
@@ -688,10 +691,39 @@ static void shell_dispatch(char *cmd)
 	}
 }
 
+void shell_run_line(const char *line)
+{
+	char tmp[LINE_MAX];
+	if (line == NULL || line[0] == '\0') {
+		return;
+	}
+	ksnprintf(tmp, sizeof(tmp), "%s", line);
+	shell_dispatch(tmp);
+}
+
 /** Feed one input character into the line editor. */
 static void shell_feed(int c)
 {
 	int shift = kbd_shift();
+	if (alink_viewing()) {
+		if (c == 0x18) {
+			alink_exit_view();
+			tty_puts("\nlocal terminal\n");
+			shell_prompt();
+			shell_repaint();
+			return;
+		}
+		if (c == KBD_F11) {
+			audio_bump_volume(-5);
+			return;
+		}
+		if (c == KBD_F12) {
+			audio_bump_volume(5);
+			return;
+		}
+		alink_send_key(c);
+		return;
+	}
 	if (c == KBD_F5) {
 		if (audio_is_playing()) {
 			audio_pause_toggle();
@@ -957,6 +989,7 @@ void shell_run(void)
 			shell_feed(c);
 			audio_service();
 		}
+		alink_poll();
 		uint64_t now = pit_ticks();
 		if (now >= scroll_hold_at) {
 			if (kbd_held(KBD_PGUP)) {

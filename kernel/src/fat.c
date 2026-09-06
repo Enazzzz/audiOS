@@ -946,6 +946,91 @@ bool fat_write(const char *path, const void *buf, uint32_t size)
 	return dir_add(parent, leaf, ATTR_ARC, first, size);
 }
 
+/** Extend `path` by `len` bytes, allocating clusters as needed. */
+bool fat_append(const char *path, const void *buf, uint32_t len)
+{
+	uint32_t parent;
+	char leaf[FAT_NAME_MAX];
+	struct fat_info inf;
+	uint32_t slot = 0;
+	const uint8_t *src = buf;
+	uint32_t left = len;
+	uint32_t last, used, prev;
+	uint8_t ent[32];
+	if (len == 0) {
+		return true;
+	}
+	if (!walk_parent(path, &parent, leaf, sizeof(leaf)) || leaf[0] == '\0') {
+		return false;
+	}
+	if (!dir_find(parent, leaf, &inf, &slot)) {
+		return fat_write(path, buf, len);
+	}
+	if (inf.kind == FAT_DIR) {
+		fat_fail("is a directory");
+		return false;
+	}
+	if (inf.cluster < 2) {
+		return fat_write(path, buf, len);
+	}
+	last = inf.cluster;
+	for (;;) {
+		uint32_t nxt = fat_get(last);
+		if (nxt < 2 || nxt >= EOC) {
+			break;
+		}
+		last = nxt;
+	}
+	used = inf.size % cluster_bytes;
+	if (inf.size > 0 && used == 0) {
+		used = cluster_bytes;
+	}
+	if (used < cluster_bytes) {
+		uint32_t room;
+		uint32_t n;
+		if (read_clus(last) != 0) {
+			return false;
+		}
+		room = cluster_bytes - used;
+		n = left < room ? left : room;
+		memcpy(clus_buf + used, src, n);
+		if (write_clus(last) != 0) {
+			fat_fail("write error");
+			return false;
+		}
+		src += n;
+		left -= n;
+	}
+	prev = last;
+	while (left > 0) {
+		uint32_t c = alloc_clus();
+		uint32_t n;
+		if (c == 0) {
+			return false;
+		}
+		if (fat_set(prev, c) != 0) {
+			return false;
+		}
+		memset(clus_buf, 0, cluster_bytes);
+		n = left < cluster_bytes ? left : cluster_bytes;
+		memcpy(clus_buf, src, n);
+		if (write_clus(c) != 0) {
+			fat_fail("write error");
+			return false;
+		}
+		src += n;
+		left -= n;
+		prev = c;
+	}
+	fat_set(prev, 0x0FFFFFFFu);
+	fat_flush();
+	if (dir_get(parent, slot, ent) <= 0) {
+		return false;
+	}
+	w32(ent + 28, inf.size + len);
+	return dir_put(parent, slot, ent) == 0;
+}
+
 bool fat_touch(const char *path)
 {
 	struct fat_info inf;
