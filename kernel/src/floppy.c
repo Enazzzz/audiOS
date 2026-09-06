@@ -9,6 +9,27 @@
 #define FLOPPY_IMG	"C:/boot/floppy.img"
 #define FLOPPY_BYTES	(FDC_SECTORS * FDC_SECSZ)
 
+/**
+ * 3.5" HD disks have two holes. The OS only sees the FDC WP pin, not the tab.
+ * Left (no slider) is density; right (slider) is write-protect.
+ */
+static void floppy_wp_explain(void)
+{
+	tty_set_color(TTY_COL_ERR);
+	tty_puts("  WP pin is on. That is the drive sensor, not a photo of the tab.\n");
+	tty_puts("  Two holes: LEFT = HD (always open). RIGHT = write-protect tab.\n");
+	tty_puts("  Cover the RIGHT hole. format/install still try; ST3 can lie.\n");
+	tty_set_color(TTY_COL_FG);
+}
+
+/** Extra lines when a write actually bounced (FDC ST1 NW). */
+static void floppy_wp_failed(void)
+{
+	tty_puts("  The controller refused the write (WP pin still asserted).\n");
+	tty_puts("  If the RIGHT tab already covers its hole: try another disk,\n");
+	tty_puts("  or clean the SMD-300 sensor in that corner. Software cannot override the pin.\n");
+}
+
 /** Print status: controller, media, whether C: has the Limine image. */
 static void floppy_status(void)
 {
@@ -33,13 +54,12 @@ static void floppy_status(void)
 			}
 			if (st3 & 0x40) {
 				tty_puts(" wp");
+			} else {
+				tty_puts(" writable");
 			}
 			tty_puts("\n");
 			if (st3 & 0x40) {
-				tty_set_color(TTY_COL_ERR);
-				tty_puts("  write-protected. Slide the 3.5\" tab so the hole is closed.\n");
-				tty_puts("  If the hole is already closed: clean the SMD-300 WP sensor.\n");
-				tty_set_color(TTY_COL_FG);
+				floppy_wp_explain();
 			}
 		}
 	}
@@ -96,6 +116,9 @@ static int floppy_write_image(void (*idle)(void))
 			fdc_motor_off();
 			tty_set_color(TTY_COL_ERR);
 			tty_printf("A: write lba %u: %s\n", lba, fdc_error());
+			if (str_starts(fdc_error(), "write protected")) {
+				floppy_wp_failed();
+			}
 			tty_set_color(TTY_COL_FG);
 			return 0;
 		}
@@ -135,10 +158,18 @@ void floppy_cmd(int argc, char **argv)
 		return;
 	}
 	if (strcmp(sub, "format") == 0) {
+		uint8_t st3 = 0;
 		tty_puts("low-level format 80x2x18 (erases the disk)...\n");
+		if (fdc_sense_drive(&st3) && (st3 & 0x40)) {
+			floppy_wp_explain();
+			tty_puts("trying format anyway (ST3 is not a lock)...\n");
+		}
 		if (!fdc_format_disk(audio_service)) {
 			tty_set_color(TTY_COL_ERR);
 			tty_printf("format: %s\n", fdc_error());
+			if (str_starts(fdc_error(), "write protected")) {
+				floppy_wp_failed();
+			}
 			tty_set_color(TTY_COL_FG);
 			return;
 		}
@@ -147,6 +178,11 @@ void floppy_cmd(int argc, char **argv)
 		return;
 	}
 	if (strcmp(sub, "install") == 0 || strcmp(sub, "sys") == 0 || strcmp(sub, "limine") == 0) {
+		uint8_t st3 = 0;
+		if (fdc_sense_drive(&st3) && (st3 & 0x40)) {
+			floppy_wp_explain();
+			tty_puts("trying write anyway (ST3 is not a lock)...\n");
+		}
 		floppy_write_image(audio_service);
 		return;
 	}

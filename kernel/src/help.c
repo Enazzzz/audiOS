@@ -62,7 +62,9 @@ static const struct help_row rows[] = {
 	  "floppy format       low-level 1.44 MB format, then write Limine + kernel\n"
 	  "floppy install      write C:/boot/floppy.img onto A: (no format)\n"
 	  "  The floppy boots the older BIOS box. Keep the USB stick plugged in for C:/D:.\n"
-	  "  3.5\" disk: slide the tab so the hole is closed, or the drive reports wp.\n"
+	  "  3.5\" HD: LEFT hole is density (always open). RIGHT hole is the WP tab.\n"
+	  "  `floppy` showing wp means the drive pin, not that the OS sees the hole.\n"
+	  "  format/install try anyway; they only fail if the FDC refuses the write.\n"
 	  "  Host: make floppy → audios.flp, then tools/write-floppy.ps1\n" },
 	{ "gain", "clip amplitude, or current clip if unnamed",
 	  "gain [clip] <amp>\n  amp is 0.5, 1.2, or 80%. Omit clip to use the current one (`use`).\n" },
