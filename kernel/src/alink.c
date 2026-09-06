@@ -69,6 +69,7 @@ static unsigned rx_bbit;
 static int32_t rx_s0;
 static int32_t rx_s1;
 static unsigned rx_sub;
+static unsigned rx_idle;
 static uint16_t last_rx_seq = 0xFFFFu;
 
 static uint8_t wait_raw[AL_MAX_RAW];
@@ -347,6 +348,22 @@ static void rx_bit(int bit)
 
 static void rx_sample(int16_t s)
 {
+	int32_t mag = s < 0 ? -(int32_t)s : (int32_t)s;
+	if (mag < 2000) {
+		if (rx_idle < 64u) {
+			rx_idle++;
+		}
+		if (rx_idle >= (AL_SPS * 2u) && !rx_in_frame) {
+			rx_sub = 0;
+			rx_s0 = 0;
+			rx_s1 = 0;
+			rx_bbit = 0;
+			rx_acc = 0;
+			return;
+		}
+	} else {
+		rx_idle = 0;
+	}
 	if (rx_sub < AL_HALF) {
 		rx_s0 += s;
 	} else {
@@ -676,6 +693,7 @@ static int alink_start(int loop)
 	rx_sub = 0;
 	rx_s0 = 0;
 	rx_s1 = 0;
+	rx_idle = 0;
 	tx_n = 0;
 	tx_i = 0;
 	tx_phase = 0;
@@ -689,12 +707,13 @@ static int alink_start(int loop)
 	} else {
 		hda_cap_hook(0);
 	}
+	/* Queue the HELLO before DMA prefill so the first periods are not silence. */
+	send_hello();
 	if (!audio_dma_hold(1)) {
 		live = 0;
 		ksnprintf(last_err, sizeof(last_err), "%s", "DAC would not start");
 		return 0;
 	}
-	send_hello();
 	return 1;
 }
 
@@ -803,6 +822,7 @@ static int phy_selftest(void)
 	rx_bbit = 0;
 	rx_sub = 0;
 	rx_s0 = rx_s1 = 0;
+	rx_idle = 0;
 	rx_ok = 0;
 	rx_bad = 0;
 	pend_pong = 0;
@@ -856,15 +876,30 @@ static int cmd_ping(void)
 {
 	uint8_t token = 0x5A;
 	uint64_t t0;
+	int16_t tmp[256];
+	unsigned i;
 	if (!live && !alink_start(loopback)) {
 		return 0;
 	}
 	pend_pong = 0;
-	t0 = pit_ticks();
-	while (wait_busy && pit_ticks() - t0 < 2000u) {
-		audio_service();
-	}
 	send_now(AL_PING, 0, &token, 1, 0);
+	if (loopback) {
+		/*
+		 * Drain TX in software. Do not call audio_service here: that
+		 * would run a second alink_fill on the DAC path and steal bits.
+		 */
+		for (i = 0; i < 80u && !pend_pong; i++) {
+			alink_fill(tmp, 256);
+		}
+		if (pend_pong) {
+			tty_puts("pong\n");
+			return 1;
+		}
+		tty_set_color(TTY_COL_ERR);
+		tty_puts("ping timeout\n");
+		tty_set_color(TTY_COL_FG);
+		return 0;
+	}
 	t0 = pit_ticks();
 	while (pit_ticks() - t0 < 3000u) {
 		audio_service();
