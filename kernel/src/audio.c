@@ -659,7 +659,14 @@ void audio_draw_hud(void)
 	unsigned cols;
 	unsigned start;
 	unsigned i;
-	if (!hud_on) {
+	static unsigned hud_col;
+	static unsigned hud_len;
+	if (!hud_on || tty_viewing()) {
+		/* Restore the live cells the overlay was covering. */
+		for (i = 0; i < hud_len; i++) {
+			tty_paint_cell(hud_col + i, 0);
+		}
+		hud_len = 0;
 		return;
 	}
 	hud_bar(bo, peak_out);
@@ -674,11 +681,15 @@ void audio_draw_hud(void)
 	} else {
 		start = cols - start;
 	}
-	tty_frame_begin();
-	for (i = 0; line[i]; i++) {
-		tty_put_xy(start + i, 0, line[i], TTY_COL_AUDIO);
+	/* Erase the previous overlay from the cell grid, then paint on top. */
+	for (i = 0; i < hud_len; i++) {
+		tty_paint_cell(hud_col + i, 0);
 	}
-	tty_frame_end();
+	for (i = 0; line[i]; i++) {
+		tty_overlay_xy(start + i, 0, line[i], TTY_COL_AUDIO);
+	}
+	hud_col = start;
+	hud_len = (unsigned)strlen(line);
 }
 
 /** Detect hardware, install defaults, and mark the subsystem ready. */

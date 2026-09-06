@@ -813,6 +813,22 @@ bool fs_read_file(const char *path, void *buf, uint32_t cap, uint32_t *out_size)
 	return read_mapped(abs, buf, cap, out_size) ? true : false;
 }
 
+bool fs_read_at(const char *path, uint32_t offset, void *buf, uint32_t len, uint32_t *out_n)
+{
+	char abs[FAT_PATH_MAX];
+	char fp[FAT_PATH_MAX];
+	if (!fs_ready()) {
+		return false;
+	}
+	if (!abs_path(path, abs, sizeof(abs))) {
+		return false;
+	}
+	if (!map_vol(abs, fp, sizeof(fp))) {
+		return false;
+	}
+	return fat_read_at(fp, offset, buf, len, out_n);
+}
+
 bool fs_write_file(const char *path, const void *buf, uint32_t size)
 {
 	if (!fs_ready()) {

@@ -79,6 +79,8 @@ bool fat_iter_begin(const char *dir_path, struct fat_iter *it);
 bool fat_iter_next(struct fat_iter *it, struct fat_info *out);
 
 bool fat_read(const char *path, void *buf, uint32_t cap, uint32_t *out_size);
+/** Read `len` bytes starting at `offset` (for streaming a 1.44 MiB floppy image). */
+bool fat_read_at(const char *path, uint32_t offset, void *buf, uint32_t len, uint32_t *out_n);
 bool fat_write(const char *path, const void *buf, uint32_t size);
 bool fat_touch(const char *path);
 bool fat_mkdir(const char *path);

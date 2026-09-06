@@ -12,6 +12,12 @@ void phys_init(uint64_t hhdm_offset, struct limine_memmap_response *map);
 /** Allocate zeroed DMA memory below 4 GiB. Returns virt, writes phys. */
 void *phys_alloc(size_t bytes, uint32_t *phys_out);
 
+/**
+ * Allocate ISA DMA memory: below 16 MiB and not crossing a 64 KiB page.
+ * The floppy controller's 8237 channel 2 needs this.
+ */
+void *phys_alloc_isa(size_t bytes, uint32_t *phys_out);
+
 /** Higher-half direct map offset. */
 uint64_t phys_hhdm(void);
 

@@ -13,12 +13,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Install toolchain
-        run: sudo apt-get update && sudo apt-get install -y gcc make xorriso qemu-system-x86 mtools python3 curl git
+        run: sudo apt-get update && sudo apt-get install -y gcc make xorriso qemu-system-x86 mtools python3 curl git nasm
       - name: Build ISO and smoke-test in QEMU
         run: make test
       - name: Checksums
         run: |
-          sha256sum audios.img audios.iso | tee SHA256SUMS
+          sha256sum audios.img audios.iso audios.flp | tee SHA256SUMS
           gzip -9 -k -f audios.img
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
@@ -28,6 +28,7 @@ jobs:
             audios.img
             audios.img.gz
             audios.iso
+            audios.flp
             SHA256SUMS
           if-no-files-found: error
           retention-days: 90
@@ -45,11 +46,14 @@ jobs:
 
             Flash **`audios.img`** (or decompress `audios.img.gz` first) as a raw USB image on the ASRock 960GM-GS3 FX. Do not flash `audios.iso` on that board.
 
+            A second, older BIOS machine that cannot boot USB: write **`audios.flp`** to a 1.44 MB floppy (`tools/write-floppy.ps1` or `floppy format` from audiOS) and boot that. Keep the USB stick plugged in for C:/D:. CPU still needs long mode (x86-64).
+
             PS/2 keyboard. Etcher raw / Rufus DD / `dd`.
           files: |
             audios.img
             audios.img.gz
             audios.iso
+            audios.flp
             SHA256SUMS
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -68,11 +72,14 @@ jobs:
 
             Flash **`audios.img`** (or decompress `audios.img.gz` first) as a raw USB image on the ASRock 960GM-GS3 FX. Do not flash `audios.iso` on that board.
 
+            A second, older BIOS machine that cannot boot USB: write **`audios.flp`** to a 1.44 MB floppy (`tools/write-floppy.ps1` or `floppy format` from audiOS) and boot that. Keep the USB stick plugged in for C:/D:. CPU still needs long mode (x86-64).
+
             PS/2 keyboard. Etcher raw / Rufus DD / `dd`.
           files: |
             audios.img
             audios.img.gz
             audios.iso
+            audios.flp
             SHA256SUMS
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

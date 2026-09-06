@@ -1,4 +1,5 @@
 #include "idt.h"
+#include "fdc.h"
 #include "kbd.h"
 #include "pic.h"
 #include "pit.h"
@@ -69,6 +70,8 @@ void interrupt_dispatch(struct interrupt_frame *frame)
 		pit_irq();
 	} else if (vector == PIC_IRQ_BASE + 1) {
 		kbd_irq();
+	} else if (vector == PIC_IRQ_BASE + 6) {
+		fdc_irq();
 	}
 	pic_eoi(vector);
 }

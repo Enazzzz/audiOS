@@ -14,7 +14,7 @@ HOST_LDFLAGS :=
 HOST_LIBS :=
 
 .PHONY: all
-all: $(IMAGE_NAME).iso $(IMAGE_NAME).img
+all: $(IMAGE_NAME).iso $(IMAGE_NAME).img $(IMAGE_NAME).flp
 
 .PHONY: kernel
 kernel: kernel/.deps-obtained
@@ -55,12 +55,14 @@ run: $(IMAGE_NAME).iso audios-fs.img
 	qemu-system-$(ARCH) -M q35 -cdrom $(IMAGE_NAME).iso -boot d -serial stdio $(QEMUFLAGS) $(QEMU_AUDIO) $(QEMU_USB)
 
 .PHONY: test
-test: $(IMAGE_NAME).iso $(IMAGE_NAME).img audios-fs.img
+test: $(IMAGE_NAME).iso $(IMAGE_NAME).img $(IMAGE_NAME).flp audios-fs.img
 	python3 tools/test_fat_lfn.py
+	python3 tools/test_floppy.py $(IMAGE_NAME).flp
 	python3 tools/qemu_smoke.py $(IMAGE_NAME).iso
 	python3 tools/qemu_full.py $(IMAGE_NAME).iso
 	python3 tools/qemu_sound.py $(IMAGE_NAME).iso
 	python3 tools/qemu_img_boot.py $(IMAGE_NAME).img
+	python3 tools/qemu_floppy.py $(IMAGE_NAME).flp
 	python3 tools/qemu_ps2.py $(IMAGE_NAME).img
 
 # 16 MiB system partition, then pad the file so leftover USB exists for a
@@ -75,7 +77,14 @@ audios-fs.img: tools/make_fat.py media/test.wav media/bad.wav media/float.wav to
 	python3 -c "import os; os.truncate('audios-fs.img', 48 * 1024 * 1024)"
 	python3 tools/plant_leftover_fat.py audios-fs.img
 
-$(IMAGE_NAME).img: limine-binary/limine kernel media/test.wav tools/demo.aos tools/C_README.txt
+$(IMAGE_NAME).flp: limine-binary/limine kernel limine-floppy.conf tools/make_floppy.py tools/limine_int13_hook.asm
+	python3 tools/make_floppy.py $(IMAGE_NAME).flp \
+		--kernel kernel/bin-$(ARCH)/kernel \
+		--limine-sys limine-binary/limine-bios.sys \
+		--limine-conf limine-floppy.conf \
+		--limine-tool limine-binary/limine
+
+$(IMAGE_NAME).img: limine-binary/limine kernel media/test.wav tools/demo.aos tools/C_README.txt $(IMAGE_NAME).flp
 	python3 tools/make_fat.py $(IMAGE_NAME).img --size-mb 64 --dir boot --dir audio --dir boot/limine \
 		--file kernel/bin-$(ARCH)/kernel:boot/kernel \
 		--file limine.conf:boot/limine/limine.conf \
@@ -85,7 +94,8 @@ $(IMAGE_NAME).img: limine-binary/limine kernel media/test.wav tools/demo.aos too
 		--file media/bad.wav:audio/bad.wav \
 		--file media/float.wav:audio/float.wav \
 		--file tools/demo.aos:demo.aos \
-		--file tools/C_README.txt:README.TXT
+		--file tools/C_README.txt:README.TXT \
+		--file $(IMAGE_NAME).flp:boot/floppy.img
 	./limine-binary/limine bios-install $(IMAGE_NAME).img
 
 media/test.wav: tools/gen_wav.py
@@ -94,9 +104,9 @@ media/test.wav: tools/gen_wav.py
 .PHONY: clean
 clean:
 	$(MAKE) -C kernel clean
-	rm -rf iso_root $(IMAGE_NAME).iso $(IMAGE_NAME).img audios-fs.img
+	rm -rf iso_root $(IMAGE_NAME).iso $(IMAGE_NAME).img $(IMAGE_NAME).flp audios-fs.img
 
 .PHONY: distclean
 distclean:
 	$(MAKE) -C kernel distclean
-	rm -rf iso_root $(IMAGE_NAME).iso $(IMAGE_NAME).img audios-fs.img limine-binary
+	rm -rf iso_root $(IMAGE_NAME).iso $(IMAGE_NAME).img $(IMAGE_NAME).flp audios-fs.img limine-binary

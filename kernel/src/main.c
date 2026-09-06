@@ -5,6 +5,7 @@
 
 #include "audio.h"
 #include "cpu.h"
+#include "fdc.h"
 #include "files.h"
 #include "fs.h"
 #include "idt.h"
@@ -104,6 +105,7 @@ void kmain(void)
 	 */
 	kbd_init();
 	__asm__ volatile ("sti");
+	fdc_init(audio_service);
 	shell_run();
 	hcf();
 }

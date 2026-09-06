@@ -43,3 +43,19 @@ void pic_eoi(uint8_t vector)
 		outb(PIC1_CMD, PIC_EOI);
 	}
 }
+
+void pic_unmask(uint8_t irq)
+{
+	if (irq >= 16) {
+		return;
+	}
+	if (irq >= 8) {
+		uint8_t m2 = inb(PIC2_DATA);
+		outb(PIC2_DATA, (uint8_t)(m2 & (uint8_t)~(1u << (irq - 8))));
+		irq = 2;	/* cascade */
+	}
+	{
+		uint8_t m1 = inb(PIC1_DATA);
+		outb(PIC1_DATA, (uint8_t)(m1 & (uint8_t)~(1u << irq)));
+	}
+}
