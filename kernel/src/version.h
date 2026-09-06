@@ -21,6 +21,8 @@
  * live meters, session restore, and .aos scripts.
  * 0.3.0 is the second machine: 1.44 MB Limine floppy (format + chainloader),
  * PageUp that actually pages, HUD overlay that does not eat the console.
+ * 0.3.1: floppy format/install no longer die with "irq timeout" (poll-off,
+ * no-op seek, MSR ACTA fallback when IRQ6 is not routed).
  *
  * Bump these three macros and AUDIOS_VERSION_STRING / AUDIOS_BANNER
  * together. Tests read AUDIOS_VERSION_STRING from this file.
@@ -28,9 +30,9 @@
 #define AUDIOS_NAME		"audiOS"
 #define AUDIOS_VERSION_MAJOR	0
 #define AUDIOS_VERSION_MINOR	3
-#define AUDIOS_VERSION_PATCH	0
-#define AUDIOS_VERSION_STRING	"0.3.0"
-#define AUDIOS_BANNER		"audiOS 0.3.0"
+#define AUDIOS_VERSION_PATCH	1
+#define AUDIOS_VERSION_STRING	"0.3.1"
+#define AUDIOS_BANNER		"audiOS 0.3.1"
 #define AUDIOS_AUDIO_RATE	96000u
 #define AUDIOS_AUDIO_BITS	24u
 #define AUDIOS_AUDIO_CHANNELS	2u
