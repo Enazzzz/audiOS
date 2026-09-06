@@ -25,8 +25,14 @@ int fdc_format_disk(void (*idle)(void));
 int fdc_read(uint32_t lba, void *buf);
 int fdc_write(uint32_t lba, const void *buf);
 
-/** Stop drive 0. Call when a multi-sector copy finishes. */
+/** Stop the selected unit. Call when a multi-sector copy finishes. */
 void fdc_motor_off(void);
+
+/** Selected FDC unit (0 or 1). */
+unsigned fdc_unit(void);
+
+/** Sense Drive Status (ST3). Spins the motor briefly if it is off. */
+int fdc_sense_drive(uint8_t *st3);
 
 const char *fdc_error(void);
 
