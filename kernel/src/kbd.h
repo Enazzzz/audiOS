@@ -38,4 +38,7 @@ int kbd_ctrl(void);
 /** Drop any queued key so a full-screen app does not eat a leftover character. */
 void kbd_flush_queue(void);
 
+/** Push a key as if it came from the 8042 (remote Audio Link input). */
+void kbd_inject(int key);
+
 #endif

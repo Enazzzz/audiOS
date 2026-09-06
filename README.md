@@ -1,12 +1,12 @@
 # audiOS
 
 audiOS is a lightweight, command-line-first operating system for digital
-audio. **v0.3.3** still lives on the **ASRock 960GM-GS3 FX** (AMD FX,
+audio. **v0.4.0** still lives on the **ASRock 960GM-GS3 FX** (AMD FX,
 760G/SB710, Realtek ALC662) and adds a **second target**: a legacy BIOS
 box that boots from a 1.44 MB floppy when USB-HDD is not in the menu.
 
 ```
-audiOS 0.3.3
+audiOS 0.4.0
 96 kHz • 24-bit • 2 channels
 1024x768 framebuffer • 128x48 text
 audiOS>
@@ -17,6 +17,18 @@ change bumps **patch** (`0.1.0` → `0.1.1` → …). A distinct capability jump
 bumps **minor**. A huge turning point becomes **1.0.0** (v1.00). The old
 `0.0.2`–`0.0.6` trail and the first-kernel `0.1` tag are history; this
 line started as a naming reset at `0.1.0`, not a rollback.
+
+## What 0.4.0 adds
+
+- **Audio Link:** two machines talk over analog audio (48 kHz, 16-bit, L+R
+  the same). Integer Manchester at 2400 bit/s, COBS frames, CRC-16,
+  stop-and-wait. Cable is **line-out → peer line-in both ways**. `link on`
+  takes the DAC; `link loop` feeds TX into RX with no ADC (QEMU).
+  `link share` / `link view` sync the terminal; keys and `link cmd` run
+  on the peer; `link send` copies a file with resume. `link test` is the
+  CI roundtrip. The intended peer analog-wise is an AC97 box (ASUS
+  A7V333-class); this kernel is still x86-64, so the other machine needs
+  long mode until a 32-bit port exists.
 
 ## What 0.3.3 / 0.3.2 / 0.3.1 / 0.3.0 adds
 
@@ -108,6 +120,7 @@ parameter page. Highlights:
 
 `cd C:` `cd D:` `cd E:` — system / data / extra USB. `/os` is C:.
 `floppy` `floppy format` `floppy install` — A: 1.44 MB Limine disk.
+`link` `link on` `link ping` `link send` — Audio Link over line-in/out.
 
 Keys: Up/Down history, PgUp/PgDn page of history, F5/F6 transport, F11/F12 volume.
 
@@ -187,8 +200,7 @@ kernel string is still the FX board until then.
 
 ## Out of scope
 
-GUI, networking, disk install, USB keyboards, auto-format of an existing
-user partition, MIDI, a DAW GUI, and float DSP (phase vocoder). USB audio
-and HDMI audio are not this board's analog path. An audio-link protocol
-(48 kHz / 16-bit / L+R) between two audiOS machines is next, not this
-release.
+GUI, networking stacks other than the Audio Link, disk install, USB
+keyboards, auto-format of an existing user partition, MIDI, a DAW GUI,
+and float DSP (phase vocoder). USB audio and HDMI audio are not this
+board's analog path.

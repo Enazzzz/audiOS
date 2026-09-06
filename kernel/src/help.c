@@ -79,6 +79,18 @@ static const struct help_row rows[] = {
 	  "join <dst> <a> <b> ...\n  Resamples sources to the first clip's rate.\n" },
 	{ "limiter", "headphone safety limiter",
 	  "audio limiter on|off\n  Soft-knee peak cap on the mix. Use on for headphones, off for speakers.\n" },
+	{ "link", "Audio Link modem (line-out / line-in)",
+	  "link                 status (48 kHz 16-bit L+R, 2400 baud Manchester)\n"
+	  "link on              start full-duplex on line-out / line-in\n"
+	  "link off             stop the modem, return the DAC to music\n"
+	  "link loop            TX fed into RX (no cable; QEMU and self-test)\n"
+	  "link ping            echo a packet; prints pong\n"
+	  "link share           send this terminal to the peer\n"
+	  "link view            show the peer terminal; keys go remote (Ctrl-X local)\n"
+	  "link cmd <command>   run a shell line on the peer\n"
+	  "link send <file>     copy a file (resume if the dest already has a prefix)\n"
+	  "link test            PHY roundtrip + loopback ping\n"
+	  "  Cable: each line-out into the other line-in. FX is ALC662; same PCM on AC97.\n" },
 	{ "load", "WAV into a named clip",
 	  "load <file.wav> [name]\n  Name defaults to the file stem. Sets the current clip.\n" },
 	{ "lpf", "low-pass filter",

@@ -1,5 +1,6 @@
 #include "audio.h"
 #include "ac97.h"
+#include "alink.h"
 #include "clip.h"
 #include "hda.h"
 #include "klib.h"
@@ -276,6 +277,23 @@ static void fill_period(int16_t *dst, uint32_t hw_frames)
 	}
 	if (dst_rate == 0) {
 		dst_rate = src_rate;
+	}
+	if (alink_active()) {
+		unsigned i;
+		alink_fill(dst, hw_frames);
+		alink_service();
+		for (i = 0; i < hw_frames; i++) {
+			int32_t a = dst[i * 2];
+			if (a < 0) {
+				a = -a;
+			}
+			if ((unsigned)a > peak_out) {
+				peak_out = (unsigned)a;
+			} else if (peak_out > 80u) {
+				peak_out -= 80u;
+			}
+		}
+		return;
 	}
 	uint32_t step = (uint32_t)(((uint64_t)src_rate << 16) / dst_rate);
 	for (uint32_t i = 0; i < hw_frames; i++) {
@@ -1195,8 +1213,27 @@ void play_cmd(int argc, char **argv)
 	tty_set_color(TTY_COL_FG);
 }
 
+int audio_dma_hold(int on)
+{
+	if (on) {
+		if (system.play == AUDIO_PLAY_PLAYING) {
+			return 1;
+		}
+		source_is_pcm = 0;
+		tone_kind = TONE_SILENCE;
+		frames_left = UINT64_MAX;
+		return audio_start_play() ? 1 : 0;
+	}
+	audio_stop_internal();
+	return 1;
+}
+
 void stop_cmd(void)
 {
+	if (alink_active()) {
+		tty_puts("link is using the DAC; `link off` first\n");
+		return;
+	}
 	if (system.play == AUDIO_PLAY_STOPPED) {
 		tty_puts("already stopped\n");
 		return;

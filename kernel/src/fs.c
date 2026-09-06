@@ -853,6 +853,29 @@ bool fs_write_file(const char *path, const void *buf, uint32_t size)
 	return true;
 }
 
+bool fs_append(const char *path, const void *buf, uint32_t len)
+{
+	if (!fs_ready()) {
+		ksnprintf(errbuf, sizeof(errbuf), "%s", "no filesystem");
+		return false;
+	}
+	char abs[FAT_PATH_MAX];
+	char fp[FAT_PATH_MAX];
+	if (!abs_path(path, abs, sizeof(abs))) {
+		ksnprintf(errbuf, sizeof(errbuf), "%s", "bad path");
+		return false;
+	}
+	if (!map_vol(abs, fp, sizeof(fp))) {
+		ksnprintf(errbuf, sizeof(errbuf), "%s", "bad path");
+		return false;
+	}
+	if (!fat_append(fp, buf, len)) {
+		ksnprintf(errbuf, sizeof(errbuf), "%s", fat_last_error());
+		return false;
+	}
+	return true;
+}
+
 /** Copy one file across volumes using the shared I/O buffer. */
 static int copy_abs(const char *src, const char *dst)
 {

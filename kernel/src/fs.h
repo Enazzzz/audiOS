@@ -41,6 +41,9 @@ bool fs_read_at(const char *path, uint32_t offset, void *buf, uint32_t len, uint
 /** Write a whole file (creates or replaces). Never formats the volume. */
 bool fs_write_file(const char *path, const void *buf, uint32_t size);
 
+/** Append to a file (creates it if missing). */
+bool fs_append(const char *path, const void *buf, uint32_t len);
+
 /** Shared I/O buffer used by WAV load/save. */
 uint8_t *fs_iobuf(uint32_t *cap);
 

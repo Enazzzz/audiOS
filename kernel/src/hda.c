@@ -142,6 +142,7 @@ static int16_t *cap_dst;
 static uint32_t cap_dst_frames;
 static uint32_t cap_dst_index;
 static int cap_sel_mic = 1;
+static void (*cap_hook_fn)(const int16_t *stereo, uint32_t frames);
 static uint8_t w_start;
 static uint8_t w_count;
 static void hda_cap_begin(void);
@@ -1287,9 +1288,17 @@ void hda_cap_poll(void)
 		}
 		cap_next = (uint8_t)((cap_next + 1) % HDA_CAP_PERIODS);
 		n++;
+		if (cap_hook_fn) {
+			cap_hook_fn(src, HDA_CAP_FRAMES);
+		}
 	}
 	peak_in = pk;
 	if ((mmr8(cap_off + SD_CTL) & SD_CTL_RUN) == 0) {
 		mmw32(cap_off + SD_CTL, (HDA_STREAM_TAG_IN << 20) | SD_CTL_RUN);
 	}
+}
+
+void hda_cap_hook(void (*fn)(const int16_t *stereo, uint32_t frames))
+{
+	cap_hook_fn = fn;
 }

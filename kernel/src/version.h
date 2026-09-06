@@ -27,16 +27,19 @@
  * Interrupt). Wait then always SIS; try unit 1; Linux 1.44 Specify.
  * 0.3.3: format/install name write-protect (ST3 wp / ST1 NW) instead of
  * a generic fail — Epson SMD-300 reports the 3.5\" tab hole.
+ * 0.4.0: Audio Link — 48 kHz 16-bit L+R Manchester modem between two
+ * machines (line-out to line-in). Terminal share/view, remote keys and
+ * commands, file send with resume. `link test` loopback for QEMU.
  *
  * Bump these three macros and AUDIOS_VERSION_STRING / AUDIOS_BANNER
  * together. Tests read AUDIOS_VERSION_STRING from this file.
  */
 #define AUDIOS_NAME		"audiOS"
 #define AUDIOS_VERSION_MAJOR	0
-#define AUDIOS_VERSION_MINOR	3
-#define AUDIOS_VERSION_PATCH	3
-#define AUDIOS_VERSION_STRING	"0.3.3"
-#define AUDIOS_BANNER		"audiOS 0.3.3"
+#define AUDIOS_VERSION_MINOR	4
+#define AUDIOS_VERSION_PATCH	0
+#define AUDIOS_VERSION_STRING	"0.4.0"
+#define AUDIOS_BANNER		"audiOS 0.4.0"
 #define AUDIOS_AUDIO_RATE	96000u
 #define AUDIOS_AUDIO_BITS	24u
 #define AUDIOS_AUDIO_CHANNELS	2u

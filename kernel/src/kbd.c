@@ -394,3 +394,8 @@ void kbd_flush_queue(void)
 	qhead = 0;
 	qtail = 0;
 }
+
+void kbd_inject(int key)
+{
+	kbd_push(key);
+}
