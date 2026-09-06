@@ -35,6 +35,12 @@ static void floppy_status(void)
 				tty_puts(" wp");
 			}
 			tty_puts("\n");
+			if (st3 & 0x40) {
+				tty_set_color(TTY_COL_ERR);
+				tty_puts("  write-protected. Slide the 3.5\" tab so the hole is closed.\n");
+				tty_puts("  If the hole is already closed: clean the SMD-300 WP sensor.\n");
+				tty_set_color(TTY_COL_FG);
+			}
 		}
 	}
 	if (strcmp(fdc_error(), "ok") != 0) {
