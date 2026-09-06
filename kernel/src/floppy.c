@@ -20,7 +20,23 @@ static void floppy_status(void)
 		tty_set_color(TTY_COL_FG);
 		return;
 	}
-	tty_printf("  controller: 82077 at 0x3F0  DMA ch2  IRQ6\n");
+	tty_printf("  controller: 82077 at 0x3F0  DMA ch2  IRQ6  unit %u\n", fdc_unit());
+	{
+		uint8_t st3 = 0;
+		if (fdc_sense_drive(&st3)) {
+			tty_printf("  ST3=0x%02x", st3);
+			if (st3 & 0x10) {
+				tty_puts(" trk0");
+			}
+			if (st3 & 0x20) {
+				tty_puts(" rdy");
+			}
+			if (st3 & 0x40) {
+				tty_puts(" wp");
+			}
+			tty_puts("\n");
+		}
+	}
 	if (strcmp(fdc_error(), "ok") != 0) {
 		tty_printf("  last error: %s\n", fdc_error());
 	}
