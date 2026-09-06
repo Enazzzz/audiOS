@@ -828,6 +828,62 @@ bool fat_read(const char *path, void *buf, uint32_t cap, uint32_t *out_size)
 	return true;
 }
 
+bool fat_read_at(const char *path, uint32_t offset, void *buf, uint32_t len, uint32_t *out_n)
+{
+	struct fat_info inf;
+	uint8_t *dst;
+	uint32_t c;
+	uint32_t skip;
+	uint32_t left;
+
+	if (!fat_stat(path, &inf)) {
+		return false;
+	}
+	if (inf.kind != FAT_FILE) {
+		fat_fail("not a file");
+		return false;
+	}
+	if (out_n) {
+		*out_n = 0;
+	}
+	if (len == 0 || offset >= inf.size) {
+		return true;
+	}
+	if (len > inf.size - offset) {
+		len = inf.size - offset;
+	}
+	c = inf.cluster;
+	skip = offset;
+	while (skip >= cluster_bytes && c >= 2 && c < EOC) {
+		c = fat_get(c);
+		skip -= cluster_bytes;
+		fat_pump();
+	}
+	dst = buf;
+	left = len;
+	while (left > 0 && c >= 2 && c < EOC) {
+		uint32_t chunk;
+		if (read_clus(c) != 0) {
+			fat_fail("read error");
+			return false;
+		}
+		chunk = cluster_bytes - skip;
+		if (chunk > left) {
+			chunk = left;
+		}
+		memcpy(dst, clus_buf + skip, chunk);
+		dst += chunk;
+		left -= chunk;
+		skip = 0;
+		c = fat_get(c);
+		fat_pump();
+	}
+	if (out_n) {
+		*out_n = len - left;
+	}
+	return left == 0;
+}
+
 bool fat_write(const char *path, const void *buf, uint32_t size)
 {
 	uint32_t parent;

@@ -57,12 +57,18 @@ static const struct help_row rows[] = {
 	  "edit <file>\n  Ctrl-O save, Ctrl-X quit. Lines wrap to the text grid.\n" },
 	{ "fade", "fade in or out",
 	  "fade [clip] in|out <dur>\n  dur is 10ms, 0.2s, or frames. Omits clip → current.\n" },
+	{ "floppy", "format A: and install the Limine floppy chainloader",
+	  "floppy              status (ISA 82077 at 0x3F0)\n"
+	  "floppy format       low-level 1.44 MB format, then write Limine + kernel\n"
+	  "floppy install      write C:/boot/floppy.img onto A: (no format)\n"
+	  "  The floppy boots the older BIOS box. Keep the USB stick plugged in for C:/D:.\n"
+	  "  Host: make floppy → audios.flp, then tools/write-floppy.ps1\n" },
 	{ "gain", "clip amplitude, or current clip if unnamed",
 	  "gain [clip] <amp>\n  amp is 0.5, 1.2, or 80%. Omit clip to use the current one (`use`).\n" },
 	{ "help", "this list, or details for one command",
 	  "help              alphabetical list\n"
 	  "help <command>    parameters and notes for that command\n"
-	  "Keys: Up/Down history  PgUp/PgDn scroll  Ctrl-C copy  Ctrl-V paste\n"
+	  "Keys: Up/Down history  PgUp/PgDn page scroll  Ctrl-C copy  Ctrl-V paste\n"
 	  "      Ctrl-Backspace delete word  F5 play/pause  F6 stop  F11/F12 volume\n" },
 	{ "hpf", "high-pass filter",
 	  "hpf [clip] <hz>\n  Omits clip → current.\n" },
@@ -214,7 +220,7 @@ void help_list(void)
 			tty_puts("  audio help        audio / tone / play commands\n");
 		}
 	}
-	tty_puts("  PgUp / PgDn       scroll one line (hold for continuous)\n");
+	tty_puts("  PgUp / PgDn       page of history (hold keeps paging)\n");
 	tty_puts("  Up / Down         previous / next command\n");
 	tty_puts("  Ctrl-C / Ctrl-V   copy / paste selection  Ctrl-Backspace word\n");
 	tty_puts("  F5 play/pause  F6 stop  F11/F12 volume\n");

@@ -3,9 +3,11 @@
 *.iso
 *.hdd
 *.img
+*.flp
 .cursor
 /media/
 /audios-out.wav
 /audios-full-out.wav
 /audios-sound/
 tools/__pycache__/
+*.bin

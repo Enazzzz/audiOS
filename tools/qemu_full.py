@@ -33,6 +33,9 @@ def boot_iso(iso: Path, fs_img: Path, capture: Path):
 		capture.unlink()
 	except FileNotFoundError:
 		pass
+	scratch = Path("audios-fdc.flp")
+	if not scratch.is_file() or scratch.stat().st_size != 1474560:
+		scratch.write_bytes(b"\x00" * 1474560)
 	cmd = [
 		"qemu-system-x86_64",
 		"-M",
@@ -60,6 +63,10 @@ def boot_iso(iso: Path, fs_img: Path, capture: Path):
 		"usb-ehci,id=ehci",
 		"-device",
 		"usb-storage,bus=ehci.0,drive=stick",
+		"-drive",
+		f"if=none,id=fd0,file={Path('audios-fdc.flp')},format=raw",
+		"-device",
+		"isa-fdc,driveA=fd0",
 	]
 	master, slave = pty.openpty()
 	attrs = termios.tcgetattr(master)
@@ -91,7 +98,7 @@ def main() -> int:
 			raise RuntimeError(f"D: leftover FAT32 was not mounted\n{text}")
 		checked.append("boot banner + FAT mount")
 
-		help = expect(master, proc, "help", ("tone", "play", "music", "storage", "reboot", "shutdown", "script", "edit", "tetris", "type", "drives", "update", "audio help"))
+		help = expect(master, proc, "help", ("tone", "play", "music", "storage", "reboot", "shutdown", "script", "edit", "tetris", "type", "drives", "update", "floppy", "audio help"))
 		if "  cat " in help.lower() or "cat <file>" in help.lower():
 			raise RuntimeError(f"help still lists cat as a file dump\n{help}")
 		expect(master, proc, "clear", (f"audiOS {ver}", "96 kHz"))
@@ -100,6 +107,9 @@ def main() -> int:
 		expect(master, proc, "mem", ("Physical memory", "usable:"))
 		expect(master, proc, "notacommand", ("no such command",))
 		checked.append("help/clear/version/cpu/mem/unknown")
+
+		expect(master, proc, "floppy", ("1.44", "floppy"))
+		checked.append("floppy status")
 
 		expect(master, proc, "audio", ("Audio subsystem", "READY", "96000 Hz"))
 		expect(master, proc, "audio devices", ("HDA",))

@@ -187,3 +187,42 @@ void *phys_alloc(size_t bytes, uint32_t *phys_out)
 	pool_used += bytes;
 	return v;
 }
+
+void *phys_alloc_isa(size_t bytes, uint32_t *phys_out)
+{
+	/* ISA 8237: 24-bit address, transfer must stay inside one 64 KiB page. */
+	bytes = align128(bytes);
+	if (bytes == 0) {
+		bytes = 128;
+	}
+	for (;;) {
+		uint32_t phys;
+		uint32_t end;
+		pool_used = align128(pool_used);
+		if (pool_virt == NULL || pool_used + bytes > pool_size) {
+			if (phys_out) {
+				*phys_out = 0;
+			}
+			return NULL;
+		}
+		phys = pool_phys + (uint32_t)pool_used;
+		end = phys + (uint32_t)bytes;
+		if (phys >= 0x1000000u || end > 0x1000000u) {
+			if (phys_out) {
+				*phys_out = 0;
+			}
+			return NULL;
+		}
+		if ((phys & ~0xFFFFu) == ((end - 1u) & ~0xFFFFu)) {
+			void *v = pool_virt + pool_used;
+			if (phys_out) {
+				*phys_out = phys;
+			}
+			memset(v, 0, bytes);
+			pool_used += bytes;
+			return v;
+		}
+		/* Skip to the next 64 KiB boundary. */
+		pool_used = (size_t)(((phys + 0x10000u) & ~0xFFFFu) - pool_phys);
+	}
+}

@@ -35,6 +35,9 @@ int fs_is_drive(const char *token);
 /** Read a whole file from the mounted volume. */
 bool fs_read_file(const char *path, void *buf, uint32_t cap, uint32_t *out_size);
 
+/** Read a byte range (used to stream C:/boot/floppy.img onto A:). */
+bool fs_read_at(const char *path, uint32_t offset, void *buf, uint32_t len, uint32_t *out_n);
+
 /** Write a whole file (creates or replaces). Never formats the volume. */
 bool fs_write_file(const char *path, const void *buf, uint32_t size);
 

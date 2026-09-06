@@ -61,7 +61,7 @@ void tty_set_idle(void (*fn)(void))
 }
 
 static uint32_t pack_rgb(uint32_t rgb);
-static void plot_at(size_t col, size_t row, unsigned char ch, uint32_t fg, uint32_t bg);
+static void plot_at(size_t col, size_t row, unsigned char ch, uint32_t fg, uint32_t bg, int shadow);
 static void tty_hide_cursor(void);
 static void serial_uint(unsigned n);
 
@@ -124,7 +124,7 @@ void tty_put_xy_bg(unsigned col, unsigned row, char ch, uint32_t rgb, uint32_t b
 	cells_ch[row][col] = uch;
 	cells_fg[row][col] = packed;
 	cells_bg[row][col] = packed_cell_bg;
-	plot_at(col, row, uch, packed, packed_cell_bg);
+	plot_at(col, row, uch, packed, packed_cell_bg, 1);
 	if (serial_quiet) {
 		return;
 	}
@@ -175,8 +175,8 @@ static uint32_t pack_rgb(uint32_t rgb)
 	return (r << fb->red_mask_shift) | (g << fb->green_mask_shift) | (b << fb->blue_mask_shift);
 }
 
-/** Plot one 8x16 glyph into the RAM shadow and the GPU. Writes only. */
-static void plot_at(size_t col, size_t row, unsigned char ch, uint32_t fg, uint32_t bg)
+/** Plot one 8x16 glyph. `shadow` writes the RAM grid used for scroll; the HUD overlay passes 0 so meters cannot smear into history. */
+static void plot_at(size_t col, size_t row, unsigned char ch, uint32_t fg, uint32_t bg, int shadow)
 {
 	if (col >= cols || row >= rows) {
 		return;
@@ -193,19 +193,17 @@ static void plot_at(size_t col, size_t row, unsigned char ch, uint32_t fg, uint3
 		uint8_t bits = font8x16[ch][gy];
 		uint32_t *slot = pix + (y0 + gy) * TTY_PIX_STRIDE + x0;
 		for (size_t gx = 0; gx < FONT_WIDTH; gx++) {
-			slot[gx] = (bits & (1u << gx)) ? fg : bg;
-		}
-		if (base == NULL) {
-			continue;
-		}
-		if (bytes >= 4) {
-			uint32_t *pixel = (uint32_t *)(base + (y0 + gy) * pitch + x0 * 4u);
-			for (size_t gx = 0; gx < FONT_WIDTH; gx++) {
-				pixel[gx] = slot[gx];
+			uint32_t colour = (bits & (1u << gx)) ? fg : bg;
+			if (shadow) {
+				slot[gx] = colour;
 			}
-		} else if (bytes == 3) {
-			for (size_t gx = 0; gx < FONT_WIDTH; gx++) {
-				uint32_t colour = slot[gx];
+			if (base == NULL) {
+				continue;
+			}
+			if (bytes >= 4) {
+				uint32_t *pixel = (uint32_t *)(base + (y0 + gy) * pitch + (x0 + gx) * 4u);
+				*pixel = colour;
+			} else if (bytes == 3) {
 				uint8_t *pixel = base + (y0 + gy) * pitch + (x0 + gx) * 3u;
 				pixel[0] = (uint8_t)(colour & 0xFF);
 				pixel[1] = (uint8_t)((colour >> 8) & 0xFF);
@@ -283,6 +281,7 @@ static void tty_redraw_view(void)
 		unsigned idx = start + r;
 		const uint8_t *ch;
 		const uint32_t *fg;
+		const uint32_t *bg = NULL;
 		uint8_t *hch;
 		uint32_t *hfg;
 		if (idx < back_n) {
@@ -296,16 +295,18 @@ static void tty_redraw_view(void)
 			}
 			ch = cells_ch[lr];
 			fg = cells_fg[lr];
+			bg = cells_bg[lr];
 		}
 		for (unsigned c = 0; c < (unsigned)cols; c++) {
 			unsigned char glyph = ch[c] ? ch[c] : ' ';
 			uint32_t colour = fg[c] ? fg[c] : packed_fg;
+			uint32_t back = (bg && bg[c]) ? bg[c] : packed_bg;
 			if (view_valid && view_ch[r][c] == glyph && view_fg[r][c] == colour) {
 				continue;
 			}
 			view_ch[r][c] = glyph;
 			view_fg[r][c] = colour;
-			plot_at(c, r, glyph, colour, packed_bg);
+			plot_at(c, r, glyph, colour, back, 1);
 		}
 		tty_idle();
 	}
@@ -320,6 +321,11 @@ void tty_view_live(void)
 	view_off = 0;
 	view_valid = 0;
 	tty_redraw_view();
+}
+
+int tty_viewing(void)
+{
+	return view_off != 0;
 }
 
 /** Move the history window by one row. */
@@ -345,14 +351,74 @@ void tty_line_down(void)
 	tty_nudge_view(1);
 }
 
+/** Jump `n` history rows without a redraw per row. */
+static void tty_nudge_view_n(int dir, unsigned n)
+{
+	unsigned i;
+	if (n == 0) {
+		n = 1;
+	}
+	for (i = 0; i < n; i++) {
+		if (dir < 0) {
+			if (view_off >= back_n) {
+				break;
+			}
+			view_off++;
+		} else {
+			if (view_off == 0) {
+				break;
+			}
+			view_off--;
+		}
+	}
+	tty_redraw_view();
+}
+
 void tty_page_up(void)
 {
-	tty_line_up();
+	unsigned n = (unsigned)rows;
+	if (n > 2u) {
+		n -= 2u;
+	}
+	if (n == 0) {
+		n = 1;
+	}
+	tty_nudge_view_n(-1, n);
 }
 
 void tty_page_down(void)
 {
-	tty_line_down();
+	unsigned n = (unsigned)rows;
+	if (n > 2u) {
+		n -= 2u;
+	}
+	if (n == 0) {
+		n = 1;
+	}
+	tty_nudge_view_n(1, n);
+}
+
+void tty_overlay_xy(unsigned col, unsigned row, char ch, uint32_t rgb)
+{
+	unsigned char uch = (unsigned char)ch;
+	if (col >= cols || row >= rows || view_off != 0) {
+		return;
+	}
+	if (uch < 32 || uch >= 127) {
+		uch = '?';
+	}
+	plot_at(col, row, uch, pack_rgb(rgb), packed_bg, 0);
+}
+
+void tty_paint_cell(unsigned col, unsigned row)
+{
+	if (col >= cols || row >= rows || view_off != 0) {
+		return;
+	}
+	unsigned char uch = cells_ch[row][col] ? cells_ch[row][col] : ' ';
+	uint32_t fg = cells_fg[row][col] ? cells_fg[row][col] : packed_fg;
+	uint32_t bg = cells_bg[row][col] ? cells_bg[row][col] : packed_bg;
+	plot_at(col, row, uch, fg, bg, 1);
 }
 
 unsigned tty_fb_width(void)
@@ -582,7 +648,8 @@ static void tty_emit(unsigned char ch)
 			cursor_col--;
 			cells_ch[cursor_row][cursor_col] = ' ';
 			cells_fg[cursor_row][cursor_col] = packed_fg;
-			plot_at(cursor_col, cursor_row, ' ', packed_fg, packed_bg);
+			cells_bg[cursor_row][cursor_col] = packed_bg;
+			plot_at(cursor_col, cursor_row, ' ', packed_fg, packed_bg, 1);
 			serial_puts_raw("\b \b");
 		}
 		return;
@@ -592,7 +659,7 @@ static void tty_emit(unsigned char ch)
 		cells_fg[cursor_row][cursor_col] = packed_fg;
 		cells_bg[cursor_row][cursor_col] = packed_bg;
 	}
-	plot_at(cursor_col, cursor_row, ch, packed_fg, packed_bg);
+	plot_at(cursor_col, cursor_row, ch, packed_fg, packed_bg, 1);
 	if (ch == FONT_BULLET) {
 		serial_puts_raw("\xE2\x80\xA2");
 	} else if (ch >= 32 && ch < 127) {

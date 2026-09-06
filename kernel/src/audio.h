@@ -101,7 +101,7 @@ unsigned audio_peak_out(void);
 unsigned audio_peak_mic(void);
 unsigned audio_peak_line(void);
 
-/** Draw volume / meter HUD on row 0 (right). Skips serial via a quiet frame. */
+/** Draw volume / meter HUD as a GPU overlay on row 0 (does not mutate cells). */
 void audio_hud_set(int on);
 void audio_draw_hud(void);
 

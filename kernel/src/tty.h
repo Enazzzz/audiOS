@@ -62,9 +62,25 @@ void tty_set_cursor(unsigned col, unsigned row);
 void tty_line_up(void);
 void tty_line_down(void);
 
-/** Page the console through RAM scrollback (does not change the live buffer). */
+/**
+ * Page the console through RAM scrollback (does not change the live buffer).
+ * One PageUp/PageDown jumps almost a full screen, not a single row.
+ */
 void tty_page_up(void);
 void tty_page_down(void);
+
+/** True while the user is looking at scrollback instead of the live prompt. */
+int tty_viewing(void);
+
+/**
+ * GPU-only glyph. Does not mutate the cell grid, serial, or scrollback
+ * view. The audio HUD uses this so meters cannot eat history or yank
+ * PageUp back to the live prompt.
+ */
+void tty_overlay_xy(unsigned col, unsigned row, char ch, uint32_t rgb);
+
+/** Repaint one live cell from RAM (used to erase a previous HUD overlay). */
+void tty_paint_cell(unsigned col, unsigned row);
 
 /** Hide the underline cursor (editor / games). */
 void tty_cursor_hide(void);

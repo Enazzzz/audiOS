@@ -1,11 +1,12 @@
 # audiOS
 
 audiOS is a lightweight, command-line-first operating system for digital
-audio. **v0.2.0** is built around one machine: the **ASRock 960GM-GS3 FX**
-(AMD FX, 760G/SB710, Realtek ALC662).
+audio. **v0.3.0** still lives on the **ASRock 960GM-GS3 FX** (AMD FX,
+760G/SB710, Realtek ALC662) and adds a **second target**: a legacy BIOS
+box that boots from a 1.44 MB floppy when USB-HDD is not in the menu.
 
 ```
-audiOS 0.2.0
+audiOS 0.3.0
 96 kHz • 24-bit • 2 channels
 1024x768 framebuffer • 128x48 text
 audiOS>
@@ -16,6 +17,20 @@ change bumps **patch** (`0.1.0` → `0.1.1` → …). A distinct capability jump
 bumps **minor**. A huge turning point becomes **1.0.0** (v1.00). The old
 `0.0.2`–`0.0.6` trail and the first-kernel `0.1` tag are history; this
 line started as a naming reset at `0.1.0`, not a rollback.
+
+## What 0.3.0 adds
+
+- **Floppy A:** ISA 82077 at 0x3F0. `floppy format` low-level formats a
+  1.44 MB disk (80×2×18) and writes Limine’s BIOS stages plus the kernel.
+  `floppy install` writes `C:/boot/floppy.img` without formatting. Host:
+  `make floppy` → `audios.flp`, then `.\tools\write-floppy.ps1`. The old
+  BIOS boots the floppy; keep the USB stick plugged in for **C:/D:**. The
+  CPU still needs long mode (x86-64).
+- **PageUp / PageDown** move almost a full screen of history. Live meters
+  are a GPU overlay — they no longer smash the top line of the console
+  or yank scrollback back to the prompt.
+
+0.2.0 still applies:
 
 ## What 0.2.0 does
 
@@ -84,8 +99,9 @@ parameter page. Highlights:
 `mount` `drives` `update` `edit` `tetris` `script` `reboot` `shutdown`
 
 `cd C:` `cd D:` `cd E:` — system / data / extra USB. `/os` is C:.
+`floppy` `floppy format` `floppy install` — A: 1.44 MB Limine disk.
 
-Keys: Up/Down history, PgUp/PgDn scroll, F5/F6 transport, F11/F12 volume.
+Keys: Up/Down history, PgUp/PgDn page of history, F5/F6 transport, F11/F12 volume.
 
 `pitch` resamples (length follows pitch) unless you add `keep`.
 `stretch` changes length. DSP is integer/fixed-point (no FPU on this kernel).
@@ -143,8 +159,28 @@ can take the 1920×1080 request.
 
 `make run` uses QEMU's HDA codec plus a USB FAT disk (`audios-fs.img`).
 
+## Floppy (second PC)
+
+The FX board boots **`audios.img`** from USB as before. The older machine
+often cannot boot that stick from the BIOS menu. Write **`audios.flp`**
+(1.44 MB) to a real floppy:
+
+- Windows: `.\tools\write-floppy.ps1 -Elevate` (USB floppy or A:)
+- From audiOS on a machine that has an onboard FDC: `floppy format`
+
+Limine’s BIOS stages plus a tiny INT13 helper live on the floppy (Limine
+itself will not talk to drive A:). The kernel is on the same disk, so boot
+does not depend on BIOS USB. After `kmain`, EHCI still mounts the stick as
+C:/D: if it is plugged in. The Limine menu also has `fslabel(AUDIOS)` and
+BIOS chainload entries (HDD 0 / HDD 1) if you need them.
+
+Tell me the second box’s board / CPU / audio when you have it; the
+kernel string is still the FX board until then.
+
 ## Out of scope
 
 GUI, networking, disk install, USB keyboards, auto-format of an existing
 user partition, MIDI, a DAW GUI, and float DSP (phase vocoder). USB audio
-and HDMI audio are not this board's analog path.
+and HDMI audio are not this board's analog path. An audio-link protocol
+(48 kHz / 16-bit / L+R) between two audiOS machines is next, not this
+release.

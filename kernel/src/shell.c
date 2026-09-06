@@ -5,6 +5,7 @@
 #include "clip.h"
 #include "cpu.h"
 #include "fat.h"
+#include "floppy.h"
 #include "fs.h"
 #include "help.h"
 #include "kbd.h"
@@ -668,6 +669,8 @@ static void shell_dispatch(char *cmd)
 		edit_cmd(argc, argv);
 	} else if (strcmp(argv[0], "tetris") == 0) {
 		tetris_cmd(argc, argv);
+	} else if (strcmp(argv[0], "floppy") == 0) {
+		floppy_cmd(argc, argv);
 	} else if (strcmp(argv[0], "reboot") == 0) {
 		session_save();
 		system_reboot();
