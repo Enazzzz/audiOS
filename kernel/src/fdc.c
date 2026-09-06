@@ -321,11 +321,14 @@ int fdc_sense_drive(uint8_t *st3)
 	return 1;
 }
 
+static uint8_t last_st1;
+
 /** Drain up to 7 result bytes after a data command. */
 static int read_result(uint8_t *st0)
 {
 	uint8_t buf[7];
 	unsigned i;
+	last_st1 = 0;
 	for (i = 0; i < 7; i++) {
 		if (!wait_rqm_out(200)) {
 			if (i == 0) {
@@ -338,7 +341,31 @@ static int read_result(uint8_t *st0)
 	if (st0 && i > 0) {
 		*st0 = buf[0];
 	}
+	if (i > 1) {
+		last_st1 = buf[1];
+	}
 	return 1;
+}
+
+/** True if the drive is reporting a write-protected disk (ST3 bit 6). */
+static int check_wp(void)
+{
+	uint8_t st3 = 0;
+	if (fdc_sense_drive(&st3) && (st3 & 0x40)) {
+		fail("write protected (cover the 3.5\" tab hole)");
+		return 1;
+	}
+	return 0;
+}
+
+static void fail_rw(int write, uint8_t st0)
+{
+	if (last_st1 & 0x02) {
+		fail("write protected (cover the 3.5\" tab hole)");
+		return;
+	}
+	ksnprintf(err, sizeof(err), "%s st0=0x%02x st1=0x%02x",
+		write ? "write failed" : "read failed", st0, last_st1);
 }
 
 static int specify(void)
@@ -515,6 +542,9 @@ static int xfer(uint32_t lba, int write)
 	if (!ready_drive()) {
 		return 0;
 	}
+	if (write && check_wp()) {
+		return 0;
+	}
 	for (try = 0; try < 3u; try++) {
 		/*
 		 * Implied seek is on; do not issue Seek here. Seek-to-current
@@ -531,7 +561,7 @@ static int xfer(uint32_t lba, int write)
 			continue;
 		}
 		if (st0 & 0xC0) {
-			fail(write ? "write failed" : "read failed");
+			fail_rw(write, st0);
 			continue;
 		}
 		fdc_cyl = c;
@@ -567,6 +597,10 @@ int fdc_format_disk(void (*idle)(void))
 		motor_off();
 		return 0;
 	}
+	if (check_wp()) {
+		motor_off();
+		return 0;
+	}
 	for (cyl = 0; cyl < FDC_CYLS; cyl++) {
 		/* FORMAT has no cylinder argument; implied seek cannot help. */
 		if (!seek(cyl)) {
@@ -595,7 +629,7 @@ int fdc_format_disk(void (*idle)(void))
 				return 0;
 			}
 			if (st0 & 0xC0) {
-				fail("format failed");
+				fail_rw(1, st0);
 				motor_off();
 				return 0;
 			}

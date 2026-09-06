@@ -25,6 +25,8 @@
  * no-op seek, MSR ACTA fallback when IRQ6 is not routed).
  * 0.3.2: FX board still timed out with msr=0x81 (ACTA stuck until Sense
  * Interrupt). Wait then always SIS; try unit 1; Linux 1.44 Specify.
+ * 0.3.3: format/install name write-protect (ST3 wp / ST1 NW) instead of
+ * a generic fail — Epson SMD-300 reports the 3.5\" tab hole.
  *
  * Bump these three macros and AUDIOS_VERSION_STRING / AUDIOS_BANNER
  * together. Tests read AUDIOS_VERSION_STRING from this file.
@@ -32,9 +34,9 @@
 #define AUDIOS_NAME		"audiOS"
 #define AUDIOS_VERSION_MAJOR	0
 #define AUDIOS_VERSION_MINOR	3
-#define AUDIOS_VERSION_PATCH	2
-#define AUDIOS_VERSION_STRING	"0.3.2"
-#define AUDIOS_BANNER		"audiOS 0.3.2"
+#define AUDIOS_VERSION_PATCH	3
+#define AUDIOS_VERSION_STRING	"0.3.3"
+#define AUDIOS_BANNER		"audiOS 0.3.3"
 #define AUDIOS_AUDIO_RATE	96000u
 #define AUDIOS_AUDIO_BITS	24u
 #define AUDIOS_AUDIO_CHANNELS	2u
