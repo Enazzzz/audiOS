@@ -280,6 +280,7 @@ static void fill_period(int16_t *dst, uint32_t hw_frames)
 	}
 	if (alink_active()) {
 		unsigned i;
+		/* Pulse PHY is native 48 kHz s16 (HDA/AC97 hw rate), not the 96 kHz mixer. */
 		alink_fill(dst, hw_frames);
 		alink_service();
 		for (i = 0; i < hw_frames; i++) {
@@ -1215,15 +1216,24 @@ void play_cmd(int argc, char **argv)
 
 int audio_dma_hold(int on)
 {
+	static uint32_t saved_frames = 256;
 	if (on) {
+		saved_frames = system.buffer_frames ? system.buffer_frames : 256;
 		if (system.play == AUDIO_PLAY_PLAYING) {
-			return 1;
+			audio_stop_internal();
 		}
+		/*
+		 * 64 frames at 48 kHz ≈ 1.33 ms. 48 frames would match a Pulse
+		 * superframe exactly, but HDA BDL addresses must stay 128-byte
+		 * aligned (64 × 4 = 256). The PHY is sample-oriented either way.
+		 */
+		system.buffer_frames = 64;
 		source_is_pcm = 0;
 		tone_kind = TONE_SILENCE;
 		frames_left = UINT64_MAX;
 		return audio_start_play() ? 1 : 0;
 	}
+	system.buffer_frames = saved_frames;
 	audio_stop_internal();
 	return 1;
 }

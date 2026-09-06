@@ -6,12 +6,12 @@
 /**
  * audiOS Audio Link: full-duplex packet modem over analog line-out / line-in.
  *
- * 48 kHz 16-bit stereo (L=R). Integer Manchester at 2400 bit/s. Frames are
- * COBS-delimited with CRC-16. Stop-and-wait ACK. Loopback (`link loop`) feeds
- * TX into RX with no ADC, which is how QEMU tests the stack.
+ * Pulse PHY: 48 kHz 16-bit stereo, 12-bit PAM on L and R independently,
+ * 1 ms superframes, ~976 kbit/s payload, sliding-window MAC. Loopback
+ * (`link loop`) feeds TX into RX with no ADC (QEMU / `link test`).
  *
+ * FX (x86-64) is MASTER by default. A7V333 (i386 slave OS) is SLAVE.
  * Cable: each machine's line-out to the other's line-in (two 3.5 mm leads).
- * FX = ALC662 HDA. A7V333-class boards are AC97 at the same PCM format.
  */
 
 /** Start idle / DMA. Safe to call more than once. */

@@ -82,7 +82,9 @@ static const struct help_row rows[] = {
 	{ "limiter", "headphone safety limiter",
 	  "audio limiter on|off\n  Soft-knee peak cap on the mix. Use on for headphones, off for speakers.\n" },
 	{ "link", "Audio Link modem (line-out / line-in)",
-	  "link                 status (48 kHz 16-bit L+R, 2400 baud Manchester)\n"
+	  "link                 status (48 kHz stereo 12-bit PAM, ~976 kbit/s)\n"
+	  "link master          this machine is the FX (initiates)\n"
+	  "link slave           this machine is the A7V333 (listens)\n"
 	  "link on              start full-duplex on line-out / line-in\n"
 	  "link off             stop the modem, return the DAC to music\n"
 	  "link loop            TX fed into RX (no cable; QEMU and self-test)\n"

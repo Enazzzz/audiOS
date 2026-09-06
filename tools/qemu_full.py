@@ -117,7 +117,7 @@ def main() -> int:
 		expect(master, proc, "floppy format", ("format ok",), timeout=90.0)
 		checked.append("floppy format")
 
-		expect(master, proc, "link", ("Audio Link", "2400"))
+		expect(master, proc, "link", ("Audio Link", "48 kHz", "MASTER"))
 		checked.append("link status")
 		expect(master, proc, "link test", ("link test ok",), timeout=20.0)
 		checked.append("link test")

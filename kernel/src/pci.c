@@ -65,6 +65,10 @@ static int pci_is_audio(uint16_t vendor, uint16_t device, uint8_t class_code, ui
 	if (vendor == 0x8086 && device == 0x2415) {
 		return 1;
 	}
+	/* VIA VT82C686 / VT8233(A) AC97 (A7V333 southbridge). */
+	if (vendor == 0x1106 && (device == 0x3058 || device == 0x3059)) {
+		return 1;
+	}
 	return 0;
 }
 

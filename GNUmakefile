@@ -14,7 +14,7 @@ HOST_LDFLAGS :=
 HOST_LIBS :=
 
 .PHONY: all
-all: $(IMAGE_NAME).iso $(IMAGE_NAME).img $(IMAGE_NAME).flp
+all: $(IMAGE_NAME).iso $(IMAGE_NAME).img $(IMAGE_NAME).flp audios32.flp
 
 .PHONY: kernel
 kernel: kernel/.deps-obtained
@@ -55,7 +55,9 @@ run: $(IMAGE_NAME).iso audios-fs.img
 	qemu-system-$(ARCH) -M q35 -cdrom $(IMAGE_NAME).iso -boot d -serial stdio $(QEMUFLAGS) $(QEMU_AUDIO) $(QEMU_USB)
 
 .PHONY: test
-test: $(IMAGE_NAME).iso $(IMAGE_NAME).img $(IMAGE_NAME).flp audios-fs.img
+test: $(IMAGE_NAME).iso $(IMAGE_NAME).img $(IMAGE_NAME).flp audios-fs.img audios32.flp
+	$(HOST_CC) $(HOST_CFLAGS) -o tools/test_alink_phy tools/test_alink_phy.c common/alink_phy.c
+	./tools/test_alink_phy
 	python3 tools/test_fat_lfn.py
 	python3 tools/test_floppy.py $(IMAGE_NAME).flp
 	python3 tools/qemu_smoke.py $(IMAGE_NAME).iso
@@ -64,6 +66,7 @@ test: $(IMAGE_NAME).iso $(IMAGE_NAME).img $(IMAGE_NAME).flp audios-fs.img
 	python3 tools/qemu_img_boot.py $(IMAGE_NAME).img
 	python3 tools/qemu_floppy.py $(IMAGE_NAME).flp
 	python3 tools/qemu_ps2.py $(IMAGE_NAME).img
+	python3 tools/qemu_slave.py audios32.flp
 
 # 16 MiB system partition, then pad the file so leftover USB exists for a
 # second FAT32 data partition (created by the kernel on first mount).
@@ -76,6 +79,15 @@ audios-fs.img: tools/make_fat.py media/test.wav media/bad.wav media/float.wav to
 		--file tools/C_README.txt:README.TXT
 	python3 -c "import os; os.truncate('audios-fs.img', 48 * 1024 * 1024)"
 	python3 tools/plant_leftover_fat.py audios-fs.img
+
+.PHONY: slave
+slave:
+	$(MAKE) -C slave
+
+audios32.flp: slave tools/make_slave_floppy.py
+	python3 tools/make_slave_floppy.py -o audios32.flp \
+		--boot slave/boot/boot.bin \
+		--kernel slave/bin/kernel.bin
 
 $(IMAGE_NAME).flp: limine-binary/limine kernel limine-floppy.conf tools/make_floppy.py tools/limine_int13_hook.asm
 	python3 tools/make_floppy.py $(IMAGE_NAME).flp \
@@ -104,9 +116,11 @@ media/test.wav: tools/gen_wav.py
 .PHONY: clean
 clean:
 	$(MAKE) -C kernel clean
-	rm -rf iso_root $(IMAGE_NAME).iso $(IMAGE_NAME).img $(IMAGE_NAME).flp audios-fs.img
+	$(MAKE) -C slave clean
+	rm -rf iso_root $(IMAGE_NAME).iso $(IMAGE_NAME).img $(IMAGE_NAME).flp audios32.flp audios-fs.img tools/test_alink_phy
 
 .PHONY: distclean
 distclean:
 	$(MAKE) -C kernel distclean
-	rm -rf iso_root $(IMAGE_NAME).iso $(IMAGE_NAME).img $(IMAGE_NAME).flp audios-fs.img limine-binary
+	$(MAKE) -C slave clean
+	rm -rf iso_root $(IMAGE_NAME).iso $(IMAGE_NAME).img $(IMAGE_NAME).flp audios32.flp audios-fs.img limine-binary tools/test_alink_phy
