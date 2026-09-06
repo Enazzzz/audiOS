@@ -25,6 +25,9 @@ int fdc_format_disk(void (*idle)(void));
 int fdc_read(uint32_t lba, void *buf);
 int fdc_write(uint32_t lba, const void *buf);
 
+/** Stop drive 0. Call when a multi-sector copy finishes. */
+void fdc_motor_off(void);
+
 const char *fdc_error(void);
 
 #endif

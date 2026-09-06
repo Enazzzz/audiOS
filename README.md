@@ -1,12 +1,12 @@
 # audiOS
 
 audiOS is a lightweight, command-line-first operating system for digital
-audio. **v0.3.0** still lives on the **ASRock 960GM-GS3 FX** (AMD FX,
+audio. **v0.3.1** still lives on the **ASRock 960GM-GS3 FX** (AMD FX,
 760G/SB710, Realtek ALC662) and adds a **second target**: a legacy BIOS
 box that boots from a 1.44 MB floppy when USB-HDD is not in the menu.
 
 ```
-audiOS 0.3.0
+audiOS 0.3.1
 96 kHz • 24-bit • 2 channels
 1024x768 framebuffer • 128x48 text
 audiOS>
@@ -18,14 +18,17 @@ bumps **minor**. A huge turning point becomes **1.0.0** (v1.00). The old
 `0.0.2`–`0.0.6` trail and the first-kernel `0.1` tag are history; this
 line started as a naming reset at `0.1.0`, not a rollback.
 
-## What 0.3.0 adds
+## What 0.3.1 / 0.3.0 adds
 
 - **Floppy A:** ISA 82077 at 0x3F0. `floppy format` low-level formats a
   1.44 MB disk (80×2×18) and writes Limine’s BIOS stages plus the kernel.
   `floppy install` writes `C:/boot/floppy.img` without formatting. Host:
   `make floppy` → `audios.flp`, then `.\tools\write-floppy.ps1`. The old
   BIOS boots the floppy; keep the USB stick plugged in for **C:/D:**. The
-  CPU still needs long mode (x86-64).
+  CPU still needs long mode (x86-64). **0.3.1** disables FDC drive
+  polling (PC 3.5" drives do not wire RDY), skips a no-op Seek to
+  cylinder 0, and completes seek/recalibrate from the MSR busy bit when
+  IRQ6 never arrives — the previous `irq timeout` on format/install.
 - **PageUp / PageDown** move almost a full screen of history. Live meters
   are a GPU overlay — they no longer smash the top line of the console
   or yank scrollback back to the prompt.

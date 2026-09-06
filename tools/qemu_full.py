@@ -112,6 +112,9 @@ def main() -> int:
 
 		expect(master, proc, "floppy", ("1.44", "floppy"))
 		checked.append("floppy status")
+		# Recalibrate + format every track (the path that was "irq timeout").
+		expect(master, proc, "floppy format", ("format ok",), timeout=90.0)
+		checked.append("floppy format")
 
 		expect(master, proc, "audio", ("Audio subsystem", "READY", "96000 Hz"))
 		expect(master, proc, "audio devices", ("HDA",))
