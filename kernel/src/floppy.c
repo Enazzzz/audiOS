@@ -21,6 +21,9 @@ static void floppy_status(void)
 		return;
 	}
 	tty_printf("  controller: 82077 at 0x3F0  DMA ch2  IRQ6\n");
+	if (strcmp(fdc_error(), "ok") != 0) {
+		tty_printf("  last error: %s\n", fdc_error());
+	}
 	fat_select(FAT_VOL_SYS);
 	if (fat_stat("/boot/floppy.img", &inf) && inf.kind == FAT_FILE) {
 		tty_printf("  image: C:/boot/floppy.img  %u bytes\n", inf.size);
@@ -61,12 +64,14 @@ static int floppy_write_image(void (*idle)(void))
 	for (lba = 0; lba < FDC_SECTORS; lba++) {
 		uint32_t n = 0;
 		if (!fs_read_at(FLOPPY_IMG, lba * FDC_SECSZ, sec, FDC_SECSZ, &n) || n != FDC_SECSZ) {
+			fdc_motor_off();
 			tty_set_color(TTY_COL_ERR);
 			tty_printf("read C:/boot/floppy.img lba %u failed\n", lba);
 			tty_set_color(TTY_COL_FG);
 			return 0;
 		}
 		if (!fdc_write(lba, sec)) {
+			fdc_motor_off();
 			tty_set_color(TTY_COL_ERR);
 			tty_printf("A: write lba %u: %s\n", lba, fdc_error());
 			tty_set_color(TTY_COL_FG);
@@ -81,11 +86,13 @@ static int floppy_write_image(void (*idle)(void))
 	}
 	tty_puts("\n");
 	if (!fdc_read(0, sec) || sec[510] != 0x55 || sec[511] != 0xAA) {
+		fdc_motor_off();
 		tty_set_color(TTY_COL_ERR);
 		tty_puts("verify failed (no 0xAA55 on sector 0)\n");
 		tty_set_color(TTY_COL_FG);
 		return 0;
 	}
+	fdc_motor_off();
 	tty_set_color(TTY_COL_AUDIO);
 	tty_puts("A: has Limine. Boot the old BIOS from the floppy; USB stick is C:/D:.\n");
 	tty_set_color(TTY_COL_FG);
