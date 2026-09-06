@@ -18,6 +18,7 @@
 #include "serial.h"
 #include "shell.h"
 #include "tty.h"
+#include "alink.h"
 
 __attribute__((used, section(".limine_requests")))
 static volatile uint64_t limine_base_revision[] = LIMINE_BASE_REVISION(6);
@@ -106,6 +107,7 @@ void kmain(void)
 	kbd_init();
 	__asm__ volatile ("sti");
 	fdc_init(audio_service);
+	alink_init();
 	shell_run();
 	hcf();
 }

@@ -96,6 +96,9 @@ void tty_view_live(void);
 unsigned tty_cols(void);
 unsigned tty_rows(void);
 
+/** Read one live cell (character + logical RGB). */
+void tty_cell_at(unsigned col, unsigned row, unsigned char *ch, uint32_t *rgb);
+
 /** Draw or erase the hardware cursor bar using the PIT clock. */
 void tty_tick_cursor(uint64_t ticks);
 

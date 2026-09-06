@@ -75,6 +75,9 @@ bool audio_rec_start(int16_t *dst, uint32_t frames);
 /** Record analog mic (1) or line-in (0). Blocks until filled or timeout. */
 bool audio_rec_analog(int16_t *dst, uint32_t frames, int mic);
 
+/** Keep the DAC running so the Audio Link can emit modem samples. */
+int audio_dma_hold(int on);
+
 bool audio_stream_open(audio_stream_t **out, uint32_t rate, uint8_t bits, uint8_t channels);
 void audio_stream_close(audio_stream_t *stream);
 

@@ -11,3 +11,8 @@
 /audios-sound/
 tools/__pycache__/
 *.bin
+*.o
+*.elf
+/slave/obj/
+/slave/bin/
+/tools/test_alink_phy

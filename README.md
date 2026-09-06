@@ -1,12 +1,14 @@
 # audiOS
 
 audiOS is a lightweight, command-line-first operating system for digital
-audio. **v0.3.4** still lives on the **ASRock 960GM-GS3 FX** (AMD FX,
-760G/SB710, Realtek ALC662) and adds a **second target**: a legacy BIOS
-box that boots from a 1.44 MB floppy when USB-HDD is not in the menu.
+audio. **v0.5.0** is two OSes. The **master** is the x86-64 kernel on the
+**ASRock 960GM-GS3 FX** (AMD FX, 760G/SB710, Realtek ALC662). The **slave**
+is a 32-bit kernel for the **ASUS A7V333** (Socket A Athlon XP, VIA KT333 /
+VT8233A, onboard AC97). They talk over analog stereo at the full 48 kHz
+sample clock.
 
 ```
-audiOS 0.3.4
+audiOS 0.5.0
 96 kHz • 24-bit • 2 channels
 1024x768 framebuffer • 128x48 text
 audiOS>
@@ -17,6 +19,24 @@ change bumps **patch** (`0.1.0` → `0.1.1` → …). A distinct capability jump
 bumps **minor**. A huge turning point becomes **1.0.0** (v1.00). The old
 `0.0.2`–`0.0.6` trail and the first-kernel `0.1` tag are history; this
 line started as a naming reset at `0.1.0`, not a rollback.
+
+## What 0.5.0 adds
+
+- **Two OSes.** FX boots **`audios.img`** (x86-64 **master**). A7V333 boots
+  **`audios32.flp`** (i686 **slave**, no long mode). `link master` / `link
+  slave`; the 64-bit kernel defaults to master, the 32-bit kernel defaults
+  to slave and starts listening at boot.
+- **Pulse PHY:** 48 kHz 16-bit stereo, 12-bit PAM on L and R independently
+  (not a mono copy), 1 ms superframes, analog Barker + DC pilots, CRC-32,
+  ~976 kbit/s payload. Sliding window, not stop-and-wait. Integer DSP only.
+  DMA periods drop to 48 frames (~1 ms) while the link owns the DAC.
+- Cable is still **line-out → peer line-in both ways**. Unplug speakers.
+  FX = ALC662 HDA. A7V333 = VIA VT8233A AC97 (`via82xx`). `link test` is
+  a software roundtrip for QEMU.
+
+## What 0.4.0 added
+
+- First Audio Link (Manchester 2400). Superseded by Pulse in 0.5.0.
 
 ## What 0.3.4 / 0.3.3 / 0.3.2 / 0.3.1 / 0.3.0 adds
 
@@ -115,6 +135,7 @@ parameter page. Highlights:
 
 `cd C:` `cd D:` `cd E:` — system / data / extra USB. `/os` is C:.
 `floppy` `floppy format` `floppy install` — A: 1.44 MB Limine disk.
+`link` `link master` `link slave` `link on` `link ping` `link send` — Pulse Audio Link (48 kHz stereo, ~1 Mbit/s).
 
 Keys: Up/Down history, PgUp/PgDn page of history, F5/F6 transport, F11/F12 volume.
 
@@ -136,7 +157,8 @@ artifacts stay on the Actions run for 90 days as well.
 
 ## Build and boot on the FX box
 
-Needs a host GCC, GNU Make, `xorriso`, `curl`, `git`, `python3`, and QEMU.
+Needs a host GCC, GNU Make, `gcc-multilib` (for the i686 slave), `xorriso`,
+`curl`, `git`, `python3`, and QEMU.
 
 ```
 make
@@ -174,30 +196,41 @@ can take the 1920×1080 request.
 
 `make run` uses QEMU's HDA codec plus a USB FAT disk (`audios-fs.img`).
 
-## Floppy (second PC)
+## Two machines (FX master, A7V333 slave)
 
-The FX board boots **`audios.img`** from USB as before. The older machine
-often cannot boot that stick from the BIOS menu. Write **`audios.flp`**
-(1.44 MB) to a real floppy:
+**Master (FX):** flash **`audios.img`**, PS/2 keyboard, `link on` (defaults
+to master). Green jack = line-out, blue = line-in.
+
+**Slave (A7V333):** that BIOS often cannot boot a USB HDD. Write
+**`audios32.flp`** to a 1.44 MB floppy (`.\tools\write-floppy.ps1` with
+that file, or `dd`). It boots a **32-bit** kernel (Athlon XP, no long
+mode), probes VIA VT8233A AC97, and listens as **slave**. Host: `make`
+builds `audios32.flp`.
+
+Cable **both ways**: FX line-out → A7V333 line-in, A7V333 line-out → FX
+line-in. Unplug speakers/headphones first. Then on the FX: `link view`
+to type on the slave; `link cmd …` / `link send` from the master.
+
+**`audios.flp`** is still the 64-bit Limine floppy for an older BIOS box
+that *has* long mode. The A7V333 cannot boot that image.
+
+## Floppy (64-bit Limine, not the A7V333)
+
+The FX board boots **`audios.img`** from USB as before. A 64-bit machine
+that cannot boot that stick from the BIOS menu can use **`audios.flp`**:
 
 - Windows: `.\tools\write-floppy.ps1 -Elevate` (USB floppy or A:)
 - From audiOS on a machine that has an onboard FDC: `floppy format`
   (0.3.4 still tries if `floppy` prints `wp` — that bit can lie; cover
   the **right** hole, not the left HD hole)
 
-Limine’s BIOS stages plus a tiny INT13 helper live on the floppy (Limine
-itself will not talk to drive A:). The kernel is on the same disk, so boot
-does not depend on BIOS USB. After `kmain`, EHCI still mounts the stick as
-C:/D: if it is plugged in. The Limine menu also has `fslabel(AUDIOS)` and
-BIOS chainload entries (HDD 0 / HDD 1) if you need them.
-
-Tell me the second box’s board / CPU / audio when you have it; the
-kernel string is still the FX board until then.
+Limine’s BIOS stages plus a tiny INT13 helper live on `audios.flp` (Limine
+itself will not talk to drive A:). After `kmain`, EHCI still mounts the
+stick as C:/D: if it is plugged in.
 
 ## Out of scope
 
-GUI, networking, disk install, USB keyboards, auto-format of an existing
-user partition, MIDI, a DAW GUI, and float DSP (phase vocoder). USB audio
-and HDMI audio are not this board's analog path. An audio-link protocol
-(48 kHz / 16-bit / L+R) between two audiOS machines is next, not this
-release.
+GUI, networking stacks other than the Audio Link, disk install, USB
+keyboards, auto-format of an existing user partition, MIDI, a DAW GUI,
+and float DSP (phase vocoder). USB audio and HDMI audio are not this
+board's analog path.

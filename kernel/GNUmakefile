@@ -82,6 +82,7 @@ override CFLAGS += \
 # Internal C preprocessor flags that should not be changed by the user.
 override CPPFLAGS := \
     -I src \
+    -I ../common \
     -I limine-protocol/include \
     -isystem freestanding-c-hdrs/include \
     $(CPPFLAGS) \
@@ -184,6 +185,7 @@ override OBJ := $(addprefix obj-$(ARCH)/,$(CFILES:.c=.c.o) $(ASFILES:.S=.S.o))
 ifeq ($(ARCH),x86_64)
 override OBJ += $(addprefix obj-$(ARCH)/,$(NASMFILES:.asm=.asm.o))
 endif
+override OBJ += obj-$(ARCH)/common/alink_phy.c.o
 override HEADER_DEPS := $(addprefix obj-$(ARCH)/,$(CFILES:.c=.c.d) $(ASFILES:.S=.S.d))
 
 # Default target. This must come first, before header dependencies.
@@ -200,6 +202,10 @@ bin-$(ARCH)/$(OUTPUT): GNUmakefile linker-scripts/$(ARCH).lds $(OBJ)
 
 # Compilation rules for *.c files.
 obj-$(ARCH)/%.c.o: %.c GNUmakefile
+	mkdir -p "$(dir $@)"
+	$(CC) $(CFLAGS) $(CPPFLAGS) -c $< -o $@
+
+obj-$(ARCH)/common/alink_phy.c.o: ../common/alink_phy.c GNUmakefile
 	mkdir -p "$(dir $@)"
 	$(CC) $(CFLAGS) $(CPPFLAGS) -c $< -o $@
 

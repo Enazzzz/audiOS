@@ -71,4 +71,7 @@ uint32_t hda_cap_filled(void);
 /** Pump input DMA and meter peaks (safe when playback is stopped). */
 void hda_cap_poll(void);
 
+/** Optional hook: each captured period (stereo s16, hardware rate). NULL to clear. */
+void hda_cap_hook(void (*fn)(const int16_t *stereo, uint32_t frames));
+
 #endif
