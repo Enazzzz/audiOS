@@ -75,13 +75,13 @@ static const struct help_row rows[] = {
 	  "      Ctrl-Backspace delete word  F5 play/pause  F6 stop  F11/F12 volume\n" },
 	{ "hpf", "high-pass filter",
 	  "hpf [clip] <hz>\n  Omits clip → current.\n" },
-	{ "ide", "PATA disk: format and install the A7V333 slave OS",
-	  "ide                 list drives on 0x1F0/0x170 (and PCI native IDE)\n"
-	  "ide format [n]      write the 32-bit slave MBR+kernel onto drive n (default 0)\n"
-	  "ide install [n]     same write, no extra chatter\n"
-	  "  Plug an IDE disk into the FX PATA header. `ide format`, then move that\n"
-	  "  disk to the A7V333 and boot it. Refuses to overwrite an AUDIOS/Limine image.\n"
-	  "  Needs C:/boot/slave.bin and C:/boot/slave.mbr (shipped on audios.img).\n" },
+	{ "ide", "IDE HDD: format the disk and install the A7V333 slave OS",
+	  "ide                 list IDE hard drives on 0x1F0/0x170 (and PCI native IDE)\n"
+	  "ide format [n]      format drive n (default 0), then install the 32-bit slave OS\n"
+	  "ide install [n]     write MBR+kernel without clearing the rest of the disk\n"
+	  "  Plug an IDE HDD into the FX IDE header. `ide format` formats that disk and\n"
+	  "  installs audiOS slave. Move the HDD to the A7V333 and boot it.\n"
+	  "  Refuses to overwrite an AUDIOS/Limine image. Needs C:/boot/slave.bin.\n" },
 	{ "info", "file metadata",
 	  "info <path>\n  Kind, size, name. Path may be C:/ D:/ E: or /os.\n" },
 	{ "join", "concatenate clips",

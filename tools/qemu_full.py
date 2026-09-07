@@ -117,7 +117,7 @@ def main() -> int:
 		expect(master, proc, "floppy format", ("format ok",), timeout=90.0)
 		checked.append("floppy format")
 
-		expect(master, proc, "ide", ("PATA",))
+		expect(master, proc, "ide", ("IDE HDD",))
 		checked.append("ide status")
 
 		expect(master, proc, "link", ("Audio Link", "48 kHz", "MASTER"))

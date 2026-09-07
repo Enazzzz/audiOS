@@ -41,6 +41,8 @@ obj/src/%.c.o: src/%.c
 	mkdir -p "$(dir $@)"
 	$(CC) $(CFLAGS) $(CPPFLAGS) -c $< -o $@
 
+obj/src/kmain.c.o: src/kmain.c ../kernel/src/version.h
+
 obj/src/entry.asm.o: src/entry.asm
 	mkdir -p "$(dir $@)"
 	nasm -f elf32 $< -o $@

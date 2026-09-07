@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""FX kernel formats a blank PATA disk; the A7V333 slave OS then boots it."""
+"""FX kernel formats a blank IDE HDD and installs the A7V333 slave OS."""
 
 from __future__ import annotations
 
@@ -24,7 +24,11 @@ def main() -> int:
 	if not iso.is_file() or not fs_img.is_file():
 		print("need audios.iso and audios-fs.img", file=sys.stderr)
 		return 1
-	hdd.write_bytes(b"\x00" * (16 * 1024 * 1024))
+	scratch = bytearray(16 * 1024 * 1024)
+	# Junk in the boot area and at the tail — `ide format` must clear it.
+	scratch[100 * 512 : 101 * 512] = b"\xaa" * 512
+	scratch[-512:] = b"\xbb" * 512
+	hdd.write_bytes(scratch)
 	# pc + if=ide lands the scratch disk on legacy 0x1F0 (PIIX). q35 is AHCI.
 	cmd = [
 		"qemu-system-x86_64",
@@ -63,16 +67,18 @@ def main() -> int:
 		if "0x1f0" not in text.lower() and "0x1F0" not in text:
 			# Status prints 0x1f0 via %x.
 			if "master" not in text.lower():
-				raise RuntimeError(f"ide did not see a PATA disk\n{text[-2000:]}")
+				raise RuntimeError(f"ide did not see an IDE HDD\n{text[-2000:]}")
 		if "slave.bin" not in text:
 			raise RuntimeError(f"C:/boot/slave.bin missing on the USB image\n{text[-2000:]}")
 		send(master, "ide format")
-		text = wait_for(master, proc, "IDE has audiOS slave", 30.0)
+		text = wait_for(master, proc, "IDE HDD has audiOS slave", 60.0)
 		if "refusing" in text.lower():
-			raise RuntimeError(f"ide format refused the scratch disk\n{text[-2000:]}")
+			raise RuntimeError(f"ide format refused the scratch HDD\n{text[-2000:]}")
+		if "format ok" not in text:
+			raise RuntimeError(f"ide format did not format the HDD\n{text[-2000:]}")
 		if PROMPT not in text:
 			wait_for(master, proc, PROMPT, 10.0)
-		print("FX ide format wrote the A7V333 slave OS")
+		print("FX ide format formatted the IDE HDD and installed the A7V333 slave OS")
 	except (RuntimeError, TimeoutError) as exc:
 		print(exc, file=sys.stderr)
 		return 1
@@ -87,6 +93,13 @@ def main() -> int:
 		return 1
 	if mbr[0x1BE] != 0x80:
 		print("scratch HDD missing active partition", file=sys.stderr)
+		return 1
+	mid = hdd.read_bytes()[100 * 512 : 101 * 512]
+	if mid != b"\x00" * 512:
+		print("ide format left junk at LBA 100 (did not format the HDD)", file=sys.stderr)
+		return 1
+	if hdd.read_bytes()[-512:] != b"\x00" * 512:
+		print("ide format left junk at the end of the HDD", file=sys.stderr)
 		return 1
 	return boot_and_test(hdd)
 

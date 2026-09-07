@@ -45,7 +45,7 @@ def main() -> int:
 	part[6] = 0xFF
 	part[7] = 0xFF
 	struct.pack_into("<I", part, 8, 1)
-	struct.pack_into("<I", part, 12, sectors)
+	struct.pack_into("<I", part, 12, nbytes // SECTOR - 1)
 	boot[0x1BE : 0x1BE + 16] = part
 	img = bytearray(nbytes)
 	img[0:512] = boot
