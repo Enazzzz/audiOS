@@ -9,6 +9,7 @@
 #include "floppy.h"
 #include "fs.h"
 #include "help.h"
+#include "ide.h"
 #include "kbd.h"
 #include "klib.h"
 #include "meminfo.h"
@@ -672,6 +673,8 @@ static void shell_dispatch(char *cmd)
 		tetris_cmd(argc, argv);
 	} else if (strcmp(argv[0], "floppy") == 0) {
 		floppy_cmd(argc, argv);
+	} else if (strcmp(argv[0], "ide") == 0) {
+		ide_cmd(argc, argv);
 	} else if (strcmp(argv[0], "link") == 0) {
 		alink_cmd(argc, argv);
 	} else if (strcmp(argv[0], "reboot") == 0) {

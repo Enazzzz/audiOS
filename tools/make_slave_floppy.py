@@ -8,6 +8,15 @@ import struct
 from pathlib import Path
 
 FLOPPY = 2880 * 512
+KERNEL_LBA_OFF = 0x1AC
+KERNEL_NSEC_OFF = 0x1B0
+
+
+def patch_boot(boot: bytearray, kernel_len: int, kernel_lba: int = 1) -> None:
+	"""Store kernel LBA and sector count in the unified slave MBR."""
+	sectors = (kernel_len + 511) // 512
+	struct.pack_into("<I", boot, KERNEL_LBA_OFF, kernel_lba)
+	struct.pack_into("<H", boot, KERNEL_NSEC_OFF, sectors)
 
 
 def main() -> int:
@@ -26,7 +35,7 @@ def main() -> int:
 	if 1 + sectors > 2880:
 		raise SystemExit(f"kernel too large for 1.44 MB ({sectors} sectors)")
 	boot = bytearray(boot)
-	struct.pack_into("<H", boot, 507, sectors)
+	patch_boot(boot, len(kern), 1)
 	img = bytearray(FLOPPY)
 	img[0:512] = boot
 	img[512 : 512 + len(kern)] = kern

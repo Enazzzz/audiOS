@@ -9,6 +9,7 @@
 #include "files.h"
 #include "fs.h"
 #include "idt.h"
+#include "ata.h"
 #include "kbd.h"
 #include "meminfo.h"
 #include "pci.h"
@@ -107,6 +108,7 @@ void kmain(void)
 	kbd_init();
 	__asm__ volatile ("sti");
 	fdc_init(audio_service);
+	ata_init();
 	alink_init();
 	shell_run();
 	hcf();

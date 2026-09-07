@@ -1,14 +1,14 @@
 # audiOS
 
 audiOS is a lightweight, command-line-first operating system for digital
-audio. **v0.5.0** is two OSes. The **master** is the x86-64 kernel on the
+audio. **v0.6.0** is two OSes. The **master** is the x86-64 kernel on the
 **ASRock 960GM-GS3 FX** (AMD FX, 760G/SB710, Realtek ALC662). The **slave**
 is a 32-bit kernel for the **ASUS A7V333** (Socket A Athlon XP, VIA KT333 /
 VT8233A, onboard AC97). They talk over analog stereo at the full 48 kHz
 sample clock.
 
 ```
-audiOS 0.5.0
+audiOS 0.6.0
 96 kHz • 24-bit • 2 channels
 1024x768 framebuffer • 128x48 text
 audiOS>
@@ -19,6 +19,16 @@ change bumps **patch** (`0.1.0` → `0.1.1` → …). A distinct capability jump
 bumps **minor**. A huge turning point becomes **1.0.0** (v1.00). The old
 `0.0.2`–`0.0.6` trail and the first-kernel `0.1` tag are history; this
 line started as a naming reset at `0.1.0`, not a rollback.
+
+## What 0.6.0 adds
+
+- **IDE boot for the slave.** The i686 kernel uses a unified MBR that loads
+  from a floppy (CHS) or an IDE HDD (INT 13h LBA). Host `make` writes
+  **`audios32.hdd`** as well as **`audios32.flp`**.
+- **`ide` on the FX master.** PIO at 0x1F0/0x170 (and PCI native IDE BARs).
+  Plug a PATA disk into the FX IDE header, `ide format` (or `ide install`).
+  That writes the slave MBR + `C:/boot/slave.bin`. Move the disk to the
+  A7V333 and boot it. It will not overwrite an AUDIOS/Limine system image.
 
 ## What 0.5.0 adds
 
@@ -135,6 +145,7 @@ parameter page. Highlights:
 
 `cd C:` `cd D:` `cd E:` — system / data / extra USB. `/os` is C:.
 `floppy` `floppy format` `floppy install` — A: 1.44 MB Limine disk.
+`ide` `ide format` `ide install` — PATA disk for the A7V333 32-bit slave OS.
 `link` `link master` `link slave` `link on` `link ping` `link send` — Pulse Audio Link (48 kHz stereo, ~1 Mbit/s).
 
 Keys: Up/Down history, PgUp/PgDn page of history, F5/F6 transport, F11/F12 volume.
@@ -199,13 +210,20 @@ can take the 1920×1080 request.
 ## Two machines (FX master, A7V333 slave)
 
 **Master (FX):** flash **`audios.img`**, PS/2 keyboard, `link on` (defaults
-to master). Green jack = line-out, blue = line-in.
+to master). Green jack = line-out, blue = line-in. The board has a PATA
+header: plug the A7V333's IDE disk in, `ide format`, then put that disk
+back in the A7V333.
 
-**Slave (A7V333):** that BIOS often cannot boot a USB HDD. Write
-**`audios32.flp`** to a 1.44 MB floppy (`.\tools\write-floppy.ps1` with
-that file, or `dd`). It boots a **32-bit** kernel (Athlon XP, no long
-mode), probes VIA VT8233A AC97, and listens as **slave**. Host: `make`
-builds `audios32.flp`.
+**Slave (A7V333):** that BIOS often cannot boot a USB HDD. Boot the 32-bit
+kernel from **IDE** (preferred) or a 1.44 MB floppy:
+
+- IDE: on the FX, `ide format` writes `C:/boot/slave.bin` onto the disk.
+  Host: `make` → **`audios32.hdd`**, then `dd` to a disk if you are not
+  using the FX as the installer.
+- Floppy: **`audios32.flp`** (`.\tools\write-floppy.ps1` or `dd`).
+
+It is a **32-bit** kernel (Athlon XP, no long mode). It probes VIA VT8233A
+AC97 and listens as **slave**.
 
 Cable **both ways**: FX line-out → A7V333 line-in, A7V333 line-out → FX
 line-in. Unplug speakers/headphones first. Then on the FX: `link view`
@@ -230,7 +248,8 @@ stick as C:/D: if it is plugged in.
 
 ## Out of scope
 
-GUI, networking stacks other than the Audio Link, disk install, USB
-keyboards, auto-format of an existing user partition, MIDI, a DAW GUI,
-and float DSP (phase vocoder). USB audio and HDMI audio are not this
-board's analog path.
+GUI, networking stacks other than the Audio Link, installing the *FX*
+kernel onto a local disk, USB keyboards, auto-format of an existing user
+partition, MIDI, a DAW GUI, and float DSP (phase vocoder). USB audio and
+HDMI audio are not this board's analog path. The FX **does** format an
+IDE disk to install the 32-bit slave OS (`ide format`).

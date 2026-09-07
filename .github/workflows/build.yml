@@ -18,7 +18,7 @@ jobs:
         run: make test
       - name: Checksums
         run: |
-          sha256sum audios.img audios.iso audios.flp audios32.flp | tee SHA256SUMS
+          sha256sum audios.img audios.iso audios.flp audios32.flp audios32.hdd | tee SHA256SUMS
           gzip -9 -k -f audios.img
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
@@ -30,6 +30,7 @@ jobs:
             audios.iso
             audios.flp
             audios32.flp
+            audios32.hdd
             SHA256SUMS
           if-no-files-found: error
           retention-days: 90
@@ -47,7 +48,7 @@ jobs:
 
             Flash **`audios.img`** (or decompress `audios.img.gz` first) as a raw USB image on the ASRock 960GM-GS3 FX (x86-64 **master**). Do not flash `audios.iso` on that board.
 
-            ASUS A7V333 (32-bit Athlon XP): write **`audios32.flp`** to a 1.44 MB floppy and boot that. It is a separate slave OS (no long mode). Cable: each machine line-out → the other line-in. `link on` on the FX (master); the A7V333 listens as slave.
+            ASUS A7V333 (32-bit Athlon XP): boot **`audios32.hdd`** on IDE, or write **`audios32.flp`** to a 1.44 MB floppy. From the FX master, plug that disk into the PATA header and run `ide format`. Cable: each machine line-out → the other line-in. `link on` on the FX (master); the A7V333 listens as slave.
 
             A 64-bit BIOS box that cannot boot USB can still use **`audios.flp`** (Limine, needs long mode). Keep the USB stick plugged in for C:/D: on the FX.
 
@@ -58,6 +59,7 @@ jobs:
             audios.iso
             audios.flp
             audios32.flp
+            audios32.hdd
             SHA256SUMS
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -76,7 +78,7 @@ jobs:
 
             Flash **`audios.img`** (or decompress `audios.img.gz` first) as a raw USB image on the ASRock 960GM-GS3 FX (x86-64 **master**). Do not flash `audios.iso` on that board.
 
-            ASUS A7V333 (32-bit Athlon XP): write **`audios32.flp`** to a 1.44 MB floppy and boot that. It is a separate slave OS (no long mode). Cable: each machine line-out → the other line-in.
+            ASUS A7V333 (32-bit Athlon XP): boot **`audios32.hdd`** on IDE, or write **`audios32.flp`** to a 1.44 MB floppy. From the FX, `ide format` installs the slave OS onto a PATA disk. Cable: each machine line-out → the other line-in.
 
             A 64-bit BIOS box that cannot boot USB can still use **`audios.flp`**. Keep the USB stick plugged in for C:/D: on the FX.
 
@@ -87,6 +89,7 @@ jobs:
             audios.iso
             audios.flp
             audios32.flp
+            audios32.hdd
             SHA256SUMS
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -155,6 +155,7 @@ void kmain(void)
 	tty_puts("32-bit  i686  ");
 	tty_puts(AUDIOS_SLAVE_BOARD);
 	tty_puts("\nPulse PHY  48 kHz stereo 12-bit PAM  ~976 kbit/s  role SLAVE\n");
+	tty_puts("boot: IDE HDD or 1.44 MB floppy\n");
 	tty_printf("codec: %s\n", audio_name());
 	tty_printf("pci audio functions: %u\n", pci_device_count());
 	for (i = 0; i < pci_device_count(); i++) {

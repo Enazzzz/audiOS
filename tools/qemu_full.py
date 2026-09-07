@@ -100,7 +100,7 @@ def main() -> int:
 			raise RuntimeError(f"D: leftover FAT32 was not mounted\n{text}")
 		checked.append("boot banner + FAT mount")
 
-		help = expect(master, proc, "help", ("tone", "play", "music", "storage", "reboot", "shutdown", "script", "edit", "tetris", "type", "drives", "update", "floppy", "link", "audio help"))
+		help = expect(master, proc, "help", ("tone", "play", "music", "storage", "reboot", "shutdown", "script", "edit", "tetris", "type", "drives", "update", "floppy", "ide", "link", "audio help"))
 		if "  cat " in help.lower() or "cat <file>" in help.lower():
 			raise RuntimeError(f"help still lists cat as a file dump\n{help}")
 		expect(master, proc, "clear", (f"audiOS {ver}", "96 kHz"))
@@ -116,6 +116,9 @@ def main() -> int:
 		# Recalibrate + format every track (the path that was "irq timeout").
 		expect(master, proc, "floppy format", ("format ok",), timeout=90.0)
 		checked.append("floppy format")
+
+		expect(master, proc, "ide", ("PATA",))
+		checked.append("ide status")
 
 		expect(master, proc, "link", ("Audio Link", "48 kHz", "MASTER"))
 		checked.append("link status")
