@@ -75,12 +75,33 @@ static const struct help_row rows[] = {
 	  "      Ctrl-Backspace delete word  F5 play/pause  F6 stop  F11/F12 volume\n" },
 	{ "hpf", "high-pass filter",
 	  "hpf [clip] <hz>\n  Omits clip → current.\n" },
+	{ "ide", "IDE HDD: format the disk and install the A7V333 slave OS",
+	  "ide                 list IDE hard drives on 0x1F0/0x170 (and PCI native IDE)\n"
+	  "ide format [n]      format drive n (default 0), then install the 32-bit slave OS\n"
+	  "ide install [n]     write MBR+kernel without clearing the rest of the disk\n"
+	  "  Plug an IDE HDD into the FX IDE header. `ide format` formats that disk and\n"
+	  "  installs audiOS slave. Move the HDD to the A7V333 and boot it.\n"
+	  "  Refuses to overwrite an AUDIOS/Limine image. Needs C:/boot/slave.bin.\n" },
 	{ "info", "file metadata",
 	  "info <path>\n  Kind, size, name. Path may be C:/ D:/ E: or /os.\n" },
 	{ "join", "concatenate clips",
 	  "join <dst> <a> <b> ...\n  Resamples sources to the first clip's rate.\n" },
 	{ "limiter", "headphone safety limiter",
 	  "audio limiter on|off\n  Soft-knee peak cap on the mix. Use on for headphones, off for speakers.\n" },
+	{ "link", "Audio Link modem (line-out / line-in)",
+	  "link                 status (48 kHz stereo 12-bit PAM, ~976 kbit/s)\n"
+	  "link master          this machine is the FX (initiates)\n"
+	  "link slave           this machine is the A7V333 (listens)\n"
+	  "link on              start full-duplex on line-out / line-in\n"
+	  "link off             stop the modem, return the DAC to music\n"
+	  "link loop            TX fed into RX (no cable; QEMU and self-test)\n"
+	  "link ping            echo a packet; prints pong\n"
+	  "link share           send this terminal to the peer\n"
+	  "link view            show the peer terminal; keys go remote (Ctrl-X local)\n"
+	  "link cmd <command>   run a shell line on the peer\n"
+	  "link send <file>     copy a file (resume if the dest already has a prefix)\n"
+	  "link test            PHY roundtrip + loopback ping\n"
+	  "  Cable: each line-out into the other line-in. FX is ALC662; same PCM on AC97.\n" },
 	{ "load", "WAV into a named clip",
 	  "load <file.wav> [name]\n  Name defaults to the file stem. Sets the current clip.\n" },
 	{ "lpf", "low-pass filter",

@@ -82,6 +82,8 @@ bool fat_read(const char *path, void *buf, uint32_t cap, uint32_t *out_size);
 /** Read `len` bytes starting at `offset` (for streaming a 1.44 MiB floppy image). */
 bool fat_read_at(const char *path, uint32_t offset, void *buf, uint32_t len, uint32_t *out_n);
 bool fat_write(const char *path, const void *buf, uint32_t size);
+/** Append `len` bytes to an existing file (creates it if missing). */
+bool fat_append(const char *path, const void *buf, uint32_t len);
 bool fat_touch(const char *path);
 bool fat_mkdir(const char *path);
 bool fat_remove(const char *path);

@@ -446,6 +446,40 @@ unsigned tty_rows(void)
 	return (unsigned)rows;
 }
 
+void tty_cell_at(unsigned col, unsigned row, unsigned char *ch, uint32_t *rgb)
+{
+	uint32_t packed;
+	if (ch) {
+		*ch = ' ';
+	}
+	if (rgb) {
+		*rgb = TTY_COL_FG;
+	}
+	if (col >= cols || row >= rows) {
+		return;
+	}
+	if (ch) {
+		*ch = cells_ch[row][col];
+	}
+	packed = cells_fg[row][col];
+	if (!rgb) {
+		return;
+	}
+	if (packed == pack_rgb(TTY_COL_DIM)) {
+		*rgb = TTY_COL_DIM;
+	} else if (packed == pack_rgb(TTY_COL_ACCENT)) {
+		*rgb = TTY_COL_ACCENT;
+	} else if (packed == pack_rgb(TTY_COL_AUDIO)) {
+		*rgb = TTY_COL_AUDIO;
+	} else if (packed == pack_rgb(TTY_COL_ERR)) {
+		*rgb = TTY_COL_ERR;
+	} else if (packed == pack_rgb(TTY_COL_SEL_FG)) {
+		*rgb = TTY_COL_SEL_FG;
+	} else {
+		*rgb = TTY_COL_FG;
+	}
+}
+
 /**
  * Scroll the console up one text row.
  * RAM memmove of cells + pixels, then one sequential blit. Never reads VRAM.

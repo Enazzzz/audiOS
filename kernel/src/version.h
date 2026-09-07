@@ -31,19 +31,28 @@
  * (Sense Drive Status can stay set with the hole covered). Spin the motor
  * 500 ms before sensing so the SMD-300 WP LED is on. Fail only on ST1 NW.
  * 3.5" HD has two holes: left = density (always open), right = WP tab.
+ * 0.4.0: Audio Link — first analog modem (Manchester 2400, superseded).
+ * 0.5.0: Pulse PHY (48 kHz stereo 12-bit PAM, ~1 Mbit/s, 1 ms frames) and
+ * a real 32-bit slave OS for the ASUS A7V333. FX is master; A7V333 is slave.
+ * 0.6.0: that slave OS boots an IDE HDD. The FX kernel talks IDE, formats
+ * a disk, and writes the slave MBR+kernel (`ide format`). Floppy still works.
+ * 0.6.1: `ide format` formats the IDE HDD (clears old boot records) then
+ * installs the 32-bit OS onto it. Shell text says IDE HDD, not PATA.
  *
  * Bump these three macros and AUDIOS_VERSION_STRING / AUDIOS_BANNER
  * together. Tests read AUDIOS_VERSION_STRING from this file.
  */
 #define AUDIOS_NAME		"audiOS"
 #define AUDIOS_VERSION_MAJOR	0
-#define AUDIOS_VERSION_MINOR	3
-#define AUDIOS_VERSION_PATCH	4
-#define AUDIOS_VERSION_STRING	"0.3.4"
-#define AUDIOS_BANNER		"audiOS 0.3.4"
+#define AUDIOS_VERSION_MINOR	6
+#define AUDIOS_VERSION_PATCH	1
+#define AUDIOS_VERSION_STRING	"0.6.1"
+#define AUDIOS_BANNER		"audiOS 0.6.1"
 #define AUDIOS_AUDIO_RATE	96000u
 #define AUDIOS_AUDIO_BITS	24u
 #define AUDIOS_AUDIO_CHANNELS	2u
 #define AUDIOS_BOARD		"ASRock 960GM-GS3 FX"
+#define AUDIOS_SLAVE_BOARD	"ASUS A7V333"
+#define AUDIOS_SLAVE_BANNER	"audiOS slave 0.6.1"
 
 #endif

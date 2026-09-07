@@ -9,6 +9,7 @@
 #include "files.h"
 #include "fs.h"
 #include "idt.h"
+#include "ata.h"
 #include "kbd.h"
 #include "meminfo.h"
 #include "pci.h"
@@ -18,6 +19,7 @@
 #include "serial.h"
 #include "shell.h"
 #include "tty.h"
+#include "alink.h"
 
 __attribute__((used, section(".limine_requests")))
 static volatile uint64_t limine_base_revision[] = LIMINE_BASE_REVISION(6);
@@ -106,6 +108,8 @@ void kmain(void)
 	kbd_init();
 	__asm__ volatile ("sti");
 	fdc_init(audio_service);
+	ata_init();
+	alink_init();
 	shell_run();
 	hcf();
 }

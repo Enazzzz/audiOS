@@ -13,12 +13,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Install toolchain
-        run: sudo apt-get update && sudo apt-get install -y gcc make xorriso qemu-system-x86 mtools python3 curl git nasm
+        run: sudo apt-get update && sudo apt-get install -y gcc make gcc-multilib xorriso qemu-system-x86 mtools python3 curl git nasm
       - name: Build ISO and smoke-test in QEMU
         run: make test
       - name: Checksums
         run: |
-          sha256sum audios.img audios.iso audios.flp | tee SHA256SUMS
+          sha256sum audios.img audios.iso audios.flp audios32.flp audios32.hdd | tee SHA256SUMS
           gzip -9 -k -f audios.img
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
@@ -29,6 +29,8 @@ jobs:
             audios.img.gz
             audios.iso
             audios.flp
+            audios32.flp
+            audios32.hdd
             SHA256SUMS
           if-no-files-found: error
           retention-days: 90
@@ -44,9 +46,11 @@ jobs:
           body: |
             Prebuilt disks from `${{ github.sha }}` on `${{ github.ref_name }}`.
 
-            Flash **`audios.img`** (or decompress `audios.img.gz` first) as a raw USB image on the ASRock 960GM-GS3 FX. Do not flash `audios.iso` on that board.
+            Flash **`audios.img`** (or decompress `audios.img.gz` first) as a raw USB image on the ASRock 960GM-GS3 FX (x86-64 **master**). Do not flash `audios.iso` on that board.
 
-            A second, older BIOS machine that cannot boot USB: write **`audios.flp`** to a 1.44 MB floppy (`tools/write-floppy.ps1` or `floppy format` from audiOS) and boot that. Keep the USB stick plugged in for C:/D:. CPU still needs long mode (x86-64).
+            ASUS A7V333 (32-bit Athlon XP): boot **`audios32.hdd`** on IDE, or write **`audios32.flp`** to a 1.44 MB floppy. From the FX master, plug that HDD into the IDE header and run `ide format` (formats the drive and installs the slave OS). Cable: each machine line-out → the other line-in. `link on` on the FX (master); the A7V333 listens as slave.
+
+            A 64-bit BIOS box that cannot boot USB can still use **`audios.flp`** (Limine, needs long mode). Keep the USB stick plugged in for C:/D: on the FX.
 
             PS/2 keyboard. Etcher raw / Rufus DD / `dd`.
           files: |
@@ -54,6 +58,8 @@ jobs:
             audios.img.gz
             audios.iso
             audios.flp
+            audios32.flp
+            audios32.hdd
             SHA256SUMS
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -70,9 +76,11 @@ jobs:
           body: |
             Prebuilt disks from `${{ github.sha }}` (main).
 
-            Flash **`audios.img`** (or decompress `audios.img.gz` first) as a raw USB image on the ASRock 960GM-GS3 FX. Do not flash `audios.iso` on that board.
+            Flash **`audios.img`** (or decompress `audios.img.gz` first) as a raw USB image on the ASRock 960GM-GS3 FX (x86-64 **master**). Do not flash `audios.iso` on that board.
 
-            A second, older BIOS machine that cannot boot USB: write **`audios.flp`** to a 1.44 MB floppy (`tools/write-floppy.ps1` or `floppy format` from audiOS) and boot that. Keep the USB stick plugged in for C:/D:. CPU still needs long mode (x86-64).
+            ASUS A7V333 (32-bit Athlon XP): boot **`audios32.hdd`** on IDE, or write **`audios32.flp`** to a 1.44 MB floppy. From the FX, `ide format` formats an IDE HDD and installs the slave OS. Cable: each machine line-out → the other line-in.
+
+            A 64-bit BIOS box that cannot boot USB can still use **`audios.flp`**. Keep the USB stick plugged in for C:/D: on the FX.
 
             PS/2 keyboard. Etcher raw / Rufus DD / `dd`.
           files: |
@@ -80,6 +88,8 @@ jobs:
             audios.img.gz
             audios.iso
             audios.flp
+            audios32.flp
+            audios32.hdd
             SHA256SUMS
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
